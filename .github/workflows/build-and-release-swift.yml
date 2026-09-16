@@ -93,6 +93,8 @@ jobs:
         test -n "$BUILD_CERTIFICATE_BASE64"
         test -n "$PROVISIONING_PROFILE_BASE64"
         CERTIFICATE_PATH="$RUNNER_TEMP/signing_certificate.p12"
+        COMPATIBLE_CERTIFICATE_PATH="$RUNNER_TEMP/signing_certificate_compatible.p12"
+        CERTIFICATE_PEM_PATH="$RUNNER_TEMP/signing_certificate.pem"
         PROFILE_PATH="$GITHUB_WORKSPACE/embedded.mobileprovision"
         KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
         printf '%s' "$BUILD_CERTIFICATE_BASE64" \
@@ -104,11 +106,13 @@ jobs:
           | tr -d '\r\n[:space:]' \
           | base64 --decode > "$PROFILE_PATH"
         openssl pkcs12 -in "$CERTIFICATE_PATH" -passin pass:"$P12_PASSWORD" -noout
+        openssl pkcs12 -in "$CERTIFICATE_PATH" -passin pass:"$P12_PASSWORD" -nodes -out "$CERTIFICATE_PEM_PATH"
+        openssl pkcs12 -export -legacy -in "$CERTIFICATE_PEM_PATH" -out "$COMPATIBLE_CERTIFICATE_PATH" -passout pass:"$P12_PASSWORD"
         security cms -D -i "$PROFILE_PATH" >/dev/null
         security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
         security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
         security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-        security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+        security import "$COMPATIBLE_CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
         security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
         security list-keychains -d user -s "$KEYCHAIN_PATH"
         security default-keychain -s "$KEYCHAIN_PATH"
