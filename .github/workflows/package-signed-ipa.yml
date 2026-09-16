@@ -87,10 +87,13 @@ jobs:
         run: |
           set -euo pipefail
           ROOTFUL=$(find "$GITHUB_WORKSPACE/artifacts" -type f -name '*iphoneos-arm.deb' -print -quit)
+          ROOTLESS=$(find "$GITHUB_WORKSPACE/artifacts" -type f -name '*iphoneos-arm64.deb' -print -quit)
           test -s "$ROOTFUL"
+          test -s "$ROOTLESS"
           EEVEESPOTIFY_VERSION=$(basename "$ROOTFUL" | awk -F_ '{print $2}')
           test -n "$EEVEESPOTIFY_VERSION"
           echo "EEVEESPOTIFY_ROOTFUL=$ROOTFUL" >> "$GITHUB_ENV"
+          echo "EEVEESPOTIFY_ROOTLESS=$ROOTLESS" >> "$GITHUB_ENV"
           echo "EEVEESPOTIFY_VERSION=$EEVEESPOTIFY_VERSION" >> "$GITHUB_ENV"
 
       - name: Download SwiftProtobuf packages
