@@ -109,14 +109,6 @@ jobs:
           echo "SWIFTPROTOBUF_ROOTFUL=$ROOTFUL" >> "$GITHUB_ENV"
           echo "SWIFTPROTOBUF_ROOTLESS=$ROOTLESS" >> "$GITHUB_ENV"
 
-      - name: Download Safari extension
-        run: |
-          set -euo pipefail
-          git clone --depth 1 https://github.com/BillyCurtis/OpenSpotifySafariExtension "$RUNNER_TEMP/OpenSpotifySafariExtension"
-          EXTENSION="$RUNNER_TEMP/OpenSpotifySafariExtension/OpenSpotifySafariExtension.appex"
-          test -d "$EXTENSION"
-          echo "OPENSPOTIFYSAFARIEXTENSION=$EXTENSION" >> "$GITHUB_ENV"
-
       - name: Download and validate authorized base IPA
         env:
           SOURCE_URL: ${{ inputs.spotify_ipa_url }}
@@ -142,6 +134,7 @@ jobs:
           test -n "$SPOTIFY_VERSION"
           rm -rf "$APP_DIR/EeveeSpotify.bundle"
           rm -f "$APP_DIR/Frameworks/EeveeSpotify.dylib"
+          rm -rf "$APP_DIR/PlugIns" "$APP_DIR/Watch" "$APP_DIR/AppClips"
           (cd "$RUNNER_TEMP/spotify-input" && zip -qry "$RUNNER_TEMP/spotify-clean.ipa" Payload)
           unzip -tq "$RUNNER_TEMP/spotify-clean.ipa"
           echo "SPOTIFY_PACKAGE=$RUNNER_TEMP/spotify-clean.ipa" >> "$GITHUB_ENV"
@@ -160,8 +153,6 @@ jobs:
           curl -fL --retry 3 https://github.com/whoeevee/ivinject/releases/download/v2/ivinject-arm64 -o "$RUNNER_TEMP/ivinject-arm64"
           chmod +x "$RUNNER_TEMP/ivinject-arm64"
           "$RUNNER_TEMP/ivinject-arm64" --help | grep -q -- '--profile'
-          curl -fL --retry 3 https://github.com/asdfzxcvbn/ipapatch/releases/download/v2.1.0/ipapatch.macos-arm64 -o "$RUNNER_TEMP/ipapatch"
-          chmod +x "$RUNNER_TEMP/ipapatch"
 
       - name: Inject tweak and sign IPA
         run: |
@@ -173,18 +164,32 @@ jobs:
             --profile-bundle-id \
             --enable-documents-support \
             --compression-level Optimal \
-            --items "$EEVEESPOTIFY_ROOTFUL" "$SWIFTPROTOBUF_ROOTFUL" "$OPENSPOTIFYSAFARIEXTENSION" "$GITHUB_WORKSPACE/embedded.mobileprovision"
+            --items "$EEVEESPOTIFY_ROOTFUL" "$SWIFTPROTOBUF_ROOTFUL" "$GITHUB_WORKSPACE/embedded.mobileprovision"
           unzip -tq "$OUTPUT"
           test -s "$OUTPUT"
           echo "SIGNED_IPA=$OUTPUT" >> "$GITHUB_ENV"
 
-      - name: Create patched variant
-        continue-on-error: true
+      - name: Verify installable signature and profile
+        env:
+          TEAM_ID: ${{ secrets.TEAM_ID }}
         run: |
           set -euo pipefail
-          PATCHED="$GITHUB_WORKSPACE/output/EeveeSpotify-${EEVEESPOTIFY_VERSION}-${SPOTIFY_VERSION}-patched.ipa"
-          "$RUNNER_TEMP/ipapatch" -input "$SIGNED_IPA" -output "$PATCHED"
-          unzip -tq "$PATCHED"
+          VERIFY_DIR="$RUNNER_TEMP/verify-signed-ipa"
+          rm -rf "$VERIFY_DIR"
+          mkdir -p "$VERIFY_DIR"
+          unzip -q "$SIGNED_IPA" -d "$VERIFY_DIR"
+          APP_DIR=$(find "$VERIFY_DIR/Payload" -maxdepth 1 -type d -name '*.app' -print -quit)
+          test -n "$APP_DIR"
+          test ! -d "$APP_DIR/PlugIns"
+          codesign --verify --deep --strict --verbose=4 "$APP_DIR"
+          codesign -d --verbose=4 "$APP_DIR" 2>&1 | grep -q "TeamIdentifier=$TEAM_ID"
+          PROFILE_PLIST="$RUNNER_TEMP/verify-profile.plist"
+          security cms -D -i "$APP_DIR/embedded.mobileprovision" > "$PROFILE_PLIST"
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_DIR/Info.plist")
+          PROFILE_APP_ID=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$PROFILE_PLIST")
+          PROFILE_DEVICES=$(/usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' "$PROFILE_PLIST")
+          test "$PROFILE_APP_ID" = "$TEAM_ID.$BUNDLE_ID"
+          echo "$PROFILE_DEVICES" | grep -q '00008130-00041D61118B803A'
 
       - name: Upload IPA artifacts
         uses: actions/upload-artifact@v4
