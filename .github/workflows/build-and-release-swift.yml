@@ -10,6 +10,7 @@ on:
 
 env:
   SWIFTPROTOBUF_VERSION: "1.29.0"
+  SPOTIFY_IPA_URL: ${{ inputs.spotify_ipa_url }}
 
 jobs:
   build:
@@ -112,7 +113,7 @@ jobs:
     - name: Download Decrypted Spotify Package
       run: |
         cd "$GITHUB_WORKSPACE"
-        source_url="${{ inputs.spotify_ipa_url }}"
+        source_url="${{ env.SPOTIFY_IPA_URL }}"
         download_url=$(curl -fsSL "$source_url" | grep -oE 'https://download[0-9]+\.mediafire\.com[^" ]+' | head -1 | sed 's/&amp;/\&/g')
         test -n "$download_url"
         wget --no-check-certificate -q "$download_url" -O "$GITHUB_WORKSPACE/spotify-input.ipa"
