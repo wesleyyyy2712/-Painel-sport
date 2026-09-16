@@ -14,7 +14,10 @@ final class TriggerTrackDetector {
 
     func attach(to player: StatefulPlayerImplementation) {
         self.player = player
-        guard timer == nil else { return }
+        guard timer == nil else {
+            poll()
+            return
+        }
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }

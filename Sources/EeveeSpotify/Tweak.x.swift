@@ -10,6 +10,8 @@ func exitApplication() {
 }
 
 struct BasePremiumPatchingGroup: HookGroup { }
+/// Grupo sempre ativo para conectar o gatilho do painel ao player do Spotify.
+struct TriggerPanelGroup: HookGroup { }
 
 struct IOS14PremiumPatchingGroup: HookGroup { }
 struct NonIOS14PremiumPatchingGroup: HookGroup { }
@@ -51,6 +53,8 @@ struct EeveeSpotify: Tweak {
     }
     
     init() {
+        TriggerPanelGroup().activate()
+
         if UserDefaults.experimentsOptions.showInstagramDestination {
             InstgramDestinationGroup().activate()
         }

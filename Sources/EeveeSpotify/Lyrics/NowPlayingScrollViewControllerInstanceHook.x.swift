@@ -9,7 +9,7 @@ var nowPlayingScrollViewController: NowPlayingScrollViewController?
 var npvScrollViewController: NPVScrollViewController?
 
 class LegacyNowPlayingPlatformSwiftServiceImplementationHook: ClassHook<NSObject> {
-    typealias Group = IOS14PremiumPatchingGroup
+    typealias Group = TriggerPanelGroup
     static let targetName = "NowPlaying_PlatformImpl.NowPlayingPlatformSwiftServiceImplementation"
     
     func provideStatefulPlayer() -> StatefulPlayerImplementation {
@@ -22,7 +22,7 @@ class LegacyNowPlayingPlatformSwiftServiceImplementationHook: ClassHook<NSObject
 }
 
 class NowPlayingPlatformSwiftServiceImplementationHook: ClassHook<NSObject> {
-    typealias Group = NonIOS14PremiumPatchingGroup
+    typealias Group = TriggerPanelGroup
     static let targetName = "NowPlaying_PlatformImpl.NowPlayingPlatformSwiftServiceImplementation"
     
     func provideStatefulPlayerWithFeatureIdentifier(_ identifier: NSString) -> StatefulPlayerImplementation {
