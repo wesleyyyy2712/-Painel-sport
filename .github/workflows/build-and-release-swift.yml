@@ -95,12 +95,21 @@ jobs:
         CERTIFICATE_PATH="$RUNNER_TEMP/signing_certificate.p12"
         PROFILE_PATH="$GITHUB_WORKSPACE/embedded.mobileprovision"
         KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
-        echo "$BUILD_CERTIFICATE_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
-        echo "$PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
+        printf '%s' "$BUILD_CERTIFICATE_BASE64" \
+          | sed -E 's#^data:[^,]*;base64,##' \
+          | tr -d '\r\n[:space:]' \
+          | base64 --decode > "$CERTIFICATE_PATH"
+        printf '%s' "$PROVISIONING_PROFILE_BASE64" \
+          | sed -E 's#^data:[^,]*;base64,##' \
+          | tr -d '\r\n[:space:]' \
+          | base64 --decode > "$PROFILE_PATH"
+        openssl pkcs12 -in "$CERTIFICATE_PATH" -passin pass:"$P12_PASSWORD" -noout
+        security cms -D -i "$PROFILE_PATH" >/dev/null
         security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
         security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
         security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
         security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+        security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
         security list-keychains -d user -s "$KEYCHAIN_PATH"
         security default-keychain -s "$KEYCHAIN_PATH"
 
@@ -189,8 +198,9 @@ jobs:
         echo "EEVEESPOTIFY_PACKAGE=$EEVEESPOTIFY_PACKAGE" >> $GITHUB_ENV
 
         ivinject-arm64 "$GITHUB_WORKSPACE/spotify-clean.ipa" "$EEVEESPOTIFY_PACKAGE" \
-          -i "$EEVEESPOTIFY_ROOTFUL" "$SWIFTPROTOBUF_ROOTFUL" "$OPENSPOTIFYSAFARIEXTENSION" "$GITHUB_WORKSPACE/embedded.mobileprovision" \
-          -s - -d --level Optimal
+          -i "$EEVEESPOTIFY_ROOTFUL" "$SWIFTPROTOBUF_ROOTFUL" "$OPENSPOTIFYSAFARIEXTENSION" \
+          --profile "$GITHUB_WORKSPACE/embedded.mobileprovision" --profile-bundle-id \
+          -d --level Optimal
 
     - name: Create Patched Package
       run: |
