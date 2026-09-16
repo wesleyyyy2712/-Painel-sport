@@ -33,7 +33,13 @@ final class TriggerPresentationCoordinator {
         guard !isPresenting else { return }
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.isPresenting else { return }
-            guard let presenter = self.topViewController() else { return }
+            guard UIApplication.shared.applicationState == .active,
+                  let presenter = self.topViewController(),
+                  presenter.viewIfLoaded?.window != nil,
+                  presenter.presentedViewController == nil else {
+                self.retryPresentation()
+                return
+            }
 
             let controller = UIHostingController(rootView: TriggerPanelHost())
             controller.modalPresentationStyle = .pageSheet
@@ -49,6 +55,12 @@ final class TriggerPresentationCoordinator {
         }
     }
 
+    private func retryPresentation() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            self?.presentPanelIfNeeded()
+        }
+    }
+
     func dismissPanelIfPresented() {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -59,8 +71,11 @@ final class TriggerPresentationCoordinator {
     }
 
     private func topViewController() -> UIViewController? {
-        let keyWindow = UIApplication.shared.windows.first(where: { $0.isKeyWindow })
-        let root = keyWindow?.rootViewController ?? UIApplication.shared.windows.first?.rootViewController
+        let windows = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+        let keyWindow = windows.first(where: { $0.isKeyWindow })
+        let root = keyWindow?.rootViewController ?? windows.first?.rootViewController
         var current = root
         while let presented = current?.presentedViewController {
             current = presented
