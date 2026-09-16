@@ -1,0 +1,59 @@
+name: Diagnose IPA Runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag containing the IPA"
+        required: true
+        default: "ipa-3"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: macos-latest
+    steps:
+      - name: Download IPA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release"
+          gh release download "${{ inputs.release_tag }}" --repo "$GITHUB_REPOSITORY" --pattern '*.ipa' --dir "$RUNNER_TEMP/release"
+          IPA=$(find "$RUNNER_TEMP/release" -type f -name '*.ipa' -print -quit)
+          test -s "$IPA"
+          echo "IPA=$IPA" >> "$GITHUB_ENV"
+
+      - name: Inspect signed app
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/app"
+          unzip -q "$IPA" -d "$RUNNER_TEMP/app"
+          APP=$(find "$RUNNER_TEMP/app/Payload" -maxdepth 1 -type d -name '*.app' -print -quit)
+          test -n "$APP"
+          EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")
+          echo "APP=$APP" >> "$GITHUB_ENV"
+          echo "MAIN_EXECUTABLE=$APP/$EXECUTABLE" >> "$GITHUB_ENV"
+          codesign --verify --deep --strict --verbose=4 "$APP"
+          codesign -d --verbose=4 "$APP"
+          codesign -d --entitlements :- "$APP" > "$RUNNER_TEMP/app-entitlements.plist"
+          plutil -lint "$RUNNER_TEMP/app-entitlements.plist"
+
+      - name: Inspect runtime dependencies
+        run: |
+          set -euo pipefail
+          echo '=== Main executable ==='
+          file "$MAIN_EXECUTABLE"
+          otool -L "$MAIN_EXECUTABLE"
+          echo '=== EeveeSpotify ==='
+          file "$APP/Frameworks/EeveeSpotify.dylib"
+          otool -L "$APP/Frameworks/EeveeSpotify.dylib"
+          echo '=== Required injected files ==='
+          test -f "$APP/Frameworks/EeveeSpotify.dylib"
+          test -f "$APP/Frameworks/SwiftProtobuf.framework/SwiftProtobuf"
+          test -f "$APP/Frameworks/Orion.framework/Orion"
+          test -f "$APP/Frameworks/CydiaSubstrate.framework/CydiaSubstrate"
+          otool -l "$MAIN_EXECUTABLE" | grep -A2 -B1 'EeveeSpotify.dylib'
