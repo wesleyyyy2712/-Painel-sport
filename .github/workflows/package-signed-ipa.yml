@@ -150,6 +150,10 @@ jobs:
       - name: Install injection tools
         run: |
           set -euo pipefail
+          git clone --depth 1 https://github.com/Tyilo/insert_dylib.git "$RUNNER_TEMP/insert_dylib-source"
+          xcrun clang -x c -arch arm64 "$RUNNER_TEMP/insert_dylib-source/insert_dylib/main.c" -I/usr/include/ -o "$RUNNER_TEMP/insert-dylib"
+          chmod +x "$RUNNER_TEMP/insert-dylib"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
           git clone --branch v2 --depth 1 https://github.com/whoeevee/ivinject.git "$RUNNER_TEMP/ivinject-source"
           mkdir -p "$HOME/.ivinject"
           cp -R "$RUNNER_TEMP/ivinject-source/KnownFrameworks/." "$HOME/.ivinject/"
