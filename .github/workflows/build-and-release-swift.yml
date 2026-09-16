@@ -204,7 +204,7 @@ jobs:
         echo "EEVEESPOTIFY_PACKAGE=$EEVEESPOTIFY_PACKAGE" >> $GITHUB_ENV
 
         ivinject-arm64 "$GITHUB_WORKSPACE/spotify-clean.ipa" "$EEVEESPOTIFY_PACKAGE" \
-          -i "$EEVEESPOTIFY_ROOTFUL" "$SWIFTPROTOBUF_ROOTFUL" "$OPENSPOTIFYSAFARIEXTENSION" \
+          -i "$EEVEESPOTIFY_ROOTFUL" "$SWIFTPROTOBUF_ROOTFUL" "$OPENSPOTIFYSAFARIEXTENSION" "$GITHUB_WORKSPACE/embedded.mobileprovision" \
           --profile "$GITHUB_WORKSPACE/embedded.mobileprovision" --profile-bundle-id \
           -d --level Optimal
 
