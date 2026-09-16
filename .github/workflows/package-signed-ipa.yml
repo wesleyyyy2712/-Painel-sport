@@ -109,6 +109,24 @@ jobs:
           echo "SWIFTPROTOBUF_ROOTFUL=$ROOTFUL" >> "$GITHUB_ENV"
           echo "SWIFTPROTOBUF_ROOTLESS=$ROOTLESS" >> "$GITHUB_ENV"
 
+      - name: Build Mach-O cleanup tool
+        run: |
+          set -euo pipefail
+          git clone --recursive --depth 1 https://github.com/alexzielenski/optool.git "$RUNNER_TEMP/optool-source"
+          xcodebuild \
+            -project "$RUNNER_TEMP/optool-source/optool.xcodeproj" \
+            -target optool \
+            -configuration Release \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            SYMROOT="$RUNNER_TEMP/optool-build" \
+            build
+          OPTOOL=$(find "$RUNNER_TEMP/optool-build" -type f -name optool -perm +111 -print -quit)
+          test -x "$OPTOOL"
+          cp "$OPTOOL" "$RUNNER_TEMP/optool"
+          chmod +x "$RUNNER_TEMP/optool"
+
       - name: Download and validate authorized base IPA
         env:
           SOURCE_URL: ${{ inputs.spotify_ipa_url }}
@@ -130,6 +148,13 @@ jobs:
           APP_DIR=$(find "$RUNNER_TEMP/spotify-input/Payload" -maxdepth 1 -type d -name '*.app' -print -quit)
           test -n "$APP_DIR"
           test -f "$APP_DIR/Info.plist"
+          EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_DIR/Info.plist")
+          MAIN_EXECUTABLE="$APP_DIR/$EXECUTABLE"
+          OLD_LOAD_COUNT=$(otool -L "$MAIN_EXECUTABLE" | grep -c '@rpath/EeveeSpotify.dylib' || true)
+          if [[ "$OLD_LOAD_COUNT" -gt 0 ]]; then
+            "$RUNNER_TEMP/optool" uninstall -p '@rpath/EeveeSpotify.dylib' -t "$MAIN_EXECUTABLE"
+          fi
+          test "$(otool -L "$MAIN_EXECUTABLE" | grep -c '@rpath/EeveeSpotify.dylib' || true)" -eq 0
           SPOTIFY_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_DIR/Info.plist")
           test -n "$SPOTIFY_VERSION"
           rm -rf "$APP_DIR/EeveeSpotify.bundle"
@@ -183,6 +208,9 @@ jobs:
           test ! -d "$APP_DIR/PlugIns"
           codesign --verify --deep --strict --verbose=4 "$APP_DIR"
           codesign -d --verbose=4 "$APP_DIR" 2>&1 | grep -q "TeamIdentifier=$TEAM_ID"
+          EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_DIR/Info.plist")
+          LOAD_COUNT=$(otool -L "$APP_DIR/$EXECUTABLE" | grep -c '@rpath/EeveeSpotify.dylib' || true)
+          test "$LOAD_COUNT" -eq 1
           PROFILE_PLIST="$RUNNER_TEMP/verify-profile.plist"
           security cms -D -i "$APP_DIR/embedded.mobileprovision" > "$PROFILE_PLIST"
           BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_DIR/Info.plist")
