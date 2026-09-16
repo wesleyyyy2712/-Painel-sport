@@ -114,7 +114,11 @@ jobs:
       run: |
         cd "$GITHUB_WORKSPACE"
         source_url="${{ env.SPOTIFY_IPA_URL }}"
-        download_url=$(curl -fsSL "$source_url" | grep -oE 'https://download[0-9]+\.mediafire\.com[^" ]+' | head -1 | sed 's/&amp;/\&/g')
+        if [[ "$source_url" == https://download*.mediafire.com/* ]]; then
+          download_url="$source_url"
+        else
+          download_url=$(curl -fsSL "$source_url" | grep -oE 'https://download[0-9]+\.mediafire\.com[^" ]+' | head -1 | sed 's/&amp;/\&/g')
+        fi
         test -n "$download_url"
         wget --no-check-certificate -q "$download_url" -O "$GITHUB_WORKSPACE/spotify-input.ipa"
         unzip -tq "$GITHUB_WORKSPACE/spotify-input.ipa"
