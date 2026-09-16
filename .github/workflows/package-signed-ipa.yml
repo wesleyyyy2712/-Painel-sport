@@ -1,0 +1,207 @@
+name: Package Signed IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      spotify_ipa_url:
+        description: "MediaFire page or direct URL for the authorized Spotify IPA"
+        required: true
+        type: string
+      tweak_run_id:
+        description: "Successful workflow run containing the compiled tweak artifacts"
+        required: true
+        default: "35140862221"
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  package:
+    runs-on: macos-latest
+    defaults:
+      run:
+        shell: zsh {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install and validate Apple signing assets
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          set -euo pipefail
+          for value in BUILD_CERTIFICATE_BASE64 P12_PASSWORD PROVISIONING_PROFILE_BASE64 KEYCHAIN_PASSWORD TEAM_ID; do
+            test -n "${(P)value}"
+          done
+
+          CERTIFICATE_PATH="$RUNNER_TEMP/signing_certificate.p12"
+          COMPATIBLE_CERTIFICATE_PATH="$RUNNER_TEMP/signing_certificate_compatible.p12"
+          CERTIFICATE_PEM_PATH="$RUNNER_TEMP/signing_certificate.pem"
+          PROFILE_PATH="$GITHUB_WORKSPACE/embedded.mobileprovision"
+          PROFILE_PLIST="$RUNNER_TEMP/profile.plist"
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+
+          printf '%s' "$BUILD_CERTIFICATE_BASE64" \
+            | sed -E 's#^data:[^,]*;base64,##' \
+            | tr -d '\r\n[:space:]' \
+            | base64 --decode > "$CERTIFICATE_PATH"
+          printf '%s' "$PROVISIONING_PROFILE_BASE64" \
+            | sed -E 's#^data:[^,]*;base64,##' \
+            | tr -d '\r\n[:space:]' \
+            | base64 --decode > "$PROFILE_PATH"
+
+          openssl pkcs12 -in "$CERTIFICATE_PATH" -passin pass:"$P12_PASSWORD" -noout
+          security cms -D -i "$PROFILE_PATH" > "$PROFILE_PLIST"
+          PROFILE_TEAM=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.team-identifier' "$PROFILE_PLIST")
+          test "$PROFILE_TEAM" = "$TEAM_ID"
+
+          openssl pkcs12 -in "$CERTIFICATE_PATH" -passin pass:"$P12_PASSWORD" -nodes -out "$CERTIFICATE_PEM_PATH"
+          openssl pkcs12 -export -legacy -in "$CERTIFICATE_PEM_PATH" -out "$COMPATIBLE_CERTIFICATE_PATH" -passout pass:"$P12_PASSWORD"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$COMPATIBLE_CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -q '1)'
+
+      - name: Download compiled tweak artifacts
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.tweak_run_id }}
+          path: ${{ github.workspace }}/artifacts
+          merge-multiple: true
+
+      - name: Locate and validate tweak packages
+        run: |
+          set -euo pipefail
+          ROOTFUL=$(find "$GITHUB_WORKSPACE/artifacts" -type f -name '*iphoneos-arm.deb' -print -quit)
+          ROOTLESS=$(find "$GITHUB_WORKSPACE/artifacts" -type f -name '*iphoneos-arm64.deb' -print -quit)
+          test -s "$ROOTFUL"
+          test -s "$ROOTLESS"
+          EEVEESPOTIFY_VERSION=$(basename "$ROOTFUL" | awk -F_ '{print $2}')
+          test -n "$EEVEESPOTIFY_VERSION"
+          echo "EEVEESPOTIFY_ROOTFUL=$ROOTFUL" >> "$GITHUB_ENV"
+          echo "EEVEESPOTIFY_ROOTLESS=$ROOTLESS" >> "$GITHUB_ENV"
+          echo "EEVEESPOTIFY_VERSION=$EEVEESPOTIFY_VERSION" >> "$GITHUB_ENV"
+
+      - name: Download SwiftProtobuf packages
+        run: |
+          set -euo pipefail
+          VERSION='1.29.0'
+          ROOTFUL="$GITHUB_WORKSPACE/org.swift.protobuf.swiftprotobuf_${VERSION}_iphoneos-arm.deb"
+          ROOTLESS="$GITHUB_WORKSPACE/org.swift.protobuf.swiftprotobuf_${VERSION}_iphoneos-arm64.deb"
+          curl -fL --retry 3 "https://github.com/whoeevee/swift-protobuf/releases/download/${VERSION}/org.swift.protobuf.swiftprotobuf_${VERSION}_iphoneos-arm.deb" -o "$ROOTFUL"
+          curl -fL --retry 3 "https://github.com/whoeevee/swift-protobuf/releases/download/${VERSION}/org.swift.protobuf.swiftprotobuf_${VERSION}_iphoneos-arm64.deb" -o "$ROOTLESS"
+          test -s "$ROOTFUL"
+          test -s "$ROOTLESS"
+          echo "SWIFTPROTOBUF_ROOTFUL=$ROOTFUL" >> "$GITHUB_ENV"
+          echo "SWIFTPROTOBUF_ROOTLESS=$ROOTLESS" >> "$GITHUB_ENV"
+
+      - name: Download Safari extension
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/BillyCurtis/OpenSpotifySafariExtension "$RUNNER_TEMP/OpenSpotifySafariExtension"
+          EXTENSION="$RUNNER_TEMP/OpenSpotifySafariExtension/OpenSpotifySafariExtension.appex"
+          test -d "$EXTENSION"
+          echo "OPENSPOTIFYSAFARIEXTENSION=$EXTENSION" >> "$GITHUB_ENV"
+
+      - name: Download and validate authorized base IPA
+        env:
+          SOURCE_URL: ${{ inputs.spotify_ipa_url }}
+        run: |
+          set -euo pipefail
+          if [[ "$SOURCE_URL" == https://download*.mediafire.com/* ]]; then
+            DOWNLOAD_URL="$SOURCE_URL"
+          else
+            DOWNLOAD_URL=$(curl -fsSL --retry 3 -A 'Mozilla/5.0' "$SOURCE_URL" \
+              | grep -oE 'https://download[0-9]+\.mediafire\.com[^" ]+' \
+              | sed -n '1p' \
+              | sed 's/&amp;/\&/g' || true)
+          fi
+          test -n "$DOWNLOAD_URL"
+          curl -fL --retry 5 --retry-all-errors -A 'Mozilla/5.0' "$DOWNLOAD_URL" -o "$RUNNER_TEMP/spotify-input.ipa"
+          unzip -tq "$RUNNER_TEMP/spotify-input.ipa"
+          rm -rf "$RUNNER_TEMP/spotify-input"
+          unzip -q "$RUNNER_TEMP/spotify-input.ipa" -d "$RUNNER_TEMP/spotify-input"
+          APP_DIR=$(find "$RUNNER_TEMP/spotify-input/Payload" -maxdepth 1 -type d -name '*.app' -print -quit)
+          test -n "$APP_DIR"
+          test -f "$APP_DIR/Info.plist"
+          SPOTIFY_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_DIR/Info.plist")
+          test -n "$SPOTIFY_VERSION"
+          rm -rf "$APP_DIR/EeveeSpotify.bundle"
+          rm -f "$APP_DIR/Frameworks/EeveeSpotify.dylib"
+          (cd "$RUNNER_TEMP/spotify-input" && zip -qry "$RUNNER_TEMP/spotify-clean.ipa" Payload)
+          unzip -tq "$RUNNER_TEMP/spotify-clean.ipa"
+          echo "SPOTIFY_PACKAGE=$RUNNER_TEMP/spotify-clean.ipa" >> "$GITHUB_ENV"
+          echo "SPOTIFY_VERSION=$SPOTIFY_VERSION" >> "$GITHUB_ENV"
+
+      - name: Install injection tools
+        run: |
+          set -euo pipefail
+          git clone --branch v2 --depth 1 https://github.com/whoeevee/ivinject.git "$RUNNER_TEMP/ivinject-source"
+          mkdir -p "$HOME/.ivinject"
+          cp -R "$RUNNER_TEMP/ivinject-source/KnownFrameworks/." "$HOME/.ivinject/"
+          curl -fL --retry 3 https://github.com/whoeevee/ivinject/releases/download/v2/ivinject-arm64 -o "$RUNNER_TEMP/ivinject-arm64"
+          chmod +x "$RUNNER_TEMP/ivinject-arm64"
+          "$RUNNER_TEMP/ivinject-arm64" --help | grep -q -- '--profile'
+          curl -fL --retry 3 https://github.com/asdfzxcvbn/ipapatch/releases/download/v2.1.0/ipapatch.macos-arm64 -o "$RUNNER_TEMP/ipapatch"
+          chmod +x "$RUNNER_TEMP/ipapatch"
+
+      - name: Inject tweak and sign IPA
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          OUTPUT="$GITHUB_WORKSPACE/output/EeveeSpotify-${EEVEESPOTIFY_VERSION}-${SPOTIFY_VERSION}.ipa"
+          "$RUNNER_TEMP/ivinject-arm64" "$SPOTIFY_PACKAGE" "$OUTPUT" \
+            --profile "$GITHUB_WORKSPACE/embedded.mobileprovision" \
+            --profile-bundle-id \
+            --enable-documents-support \
+            --compression-level Optimal \
+            --items "$EEVEESPOTIFY_ROOTFUL" "$SWIFTPROTOBUF_ROOTFUL" "$OPENSPOTIFYSAFARIEXTENSION" "$GITHUB_WORKSPACE/embedded.mobileprovision"
+          unzip -tq "$OUTPUT"
+          test -s "$OUTPUT"
+          echo "SIGNED_IPA=$OUTPUT" >> "$GITHUB_ENV"
+
+      - name: Create patched variant
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          PATCHED="$GITHUB_WORKSPACE/output/EeveeSpotify-${EEVEESPOTIFY_VERSION}-${SPOTIFY_VERSION}-patched.ipa"
+          "$RUNNER_TEMP/ipapatch" -input "$SIGNED_IPA" -output "$PATCHED"
+          unzip -tq "$PATCHED"
+
+      - name: Upload IPA artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: EeveeSpotify-${{ env.EEVEESPOTIFY_VERSION }}-${{ env.SPOTIFY_VERSION }}-IPAs
+          path: ${{ github.workspace }}/output/*.ipa
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ipa-${{ github.run_number }}
+          name: EeveeSpotify ${{ env.EEVEESPOTIFY_VERSION }} for Spotify ${{ env.SPOTIFY_VERSION }}
+          body: Signed IPA built from the authorized base package supplied to this workflow.
+          files: ${{ github.workspace }}/output/*.ipa
+          fail_on_unmatched_files: true
+
+      - name: Remove temporary signing keychain
+        if: always()
+        env:
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          security delete-keychain "$RUNNER_TEMP/build.keychain-db" 2>/dev/null || true

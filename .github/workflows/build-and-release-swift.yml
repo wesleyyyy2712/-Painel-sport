@@ -180,9 +180,10 @@ jobs:
       run: |
         git clone https://github.com/whoeevee/ivinject.git
         cp -r ./ivinject/KnownFrameworks ~/.ivinject
-        wget https://github.com/whoeevee/ivinject/releases/download/first/ivinject-arm64
+        wget https://github.com/whoeevee/ivinject/releases/download/v2/ivinject-arm64
         sudo mv ivinject-arm64 /usr/local/bin/
         sudo chmod +x /usr/local/bin/ivinject-arm64
+        ivinject-arm64 --help | grep -q -- '--profile'
 
     - name: Setup ipapatch
       run: |
@@ -213,6 +214,15 @@ jobs:
         echo "EEVEESPOTIFY_PATCHED_PACKAGE=$EEVEESPOTIFY_PATCHED_PACKAGE" >> $GITHUB_ENV
 
         ipapatch -input "$EEVEESPOTIFY_PACKAGE" -output "$EEVEESPOTIFY_PATCHED_PACKAGE"
+
+    - name: Upload IPA artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: EeveeSpotify-IPAs
+        path: |
+          ${{ env.EEVEESPOTIFY_PACKAGE }}
+          ${{ env.EEVEESPOTIFY_PATCHED_PACKAGE }}
+        if-no-files-found: error
 
     - name: Compose Changelog
       if: env.LATEST_EEVEESPOTIFY_VERSION != env.EEVEESPOTIFY_VERSION
