@@ -21,12 +21,13 @@ final class TriggerTrackDetector {
             self.hasStarted = true
 
             self.activationObserver = NotificationCenter.default.addObserver(
-                name: UIApplication.didBecomeActiveNotification,
+                forName: UIApplication.didBecomeActiveNotification,
                 object: nil,
-                queue: .main
-            ) { [weak self] _ in
+                queue: .main,
+                using: { [weak self] _ in
                 self?.startTimerAfterLaunchSettles()
-            }
+                }
+            )
 
             if UIApplication.shared.applicationState == .active {
                 self.startTimerAfterLaunchSettles()
