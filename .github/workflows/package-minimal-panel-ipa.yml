@@ -1,0 +1,213 @@
+name: Package Minimal Panel IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      spotify_ipa_url:
+        description: "MediaFire page or direct URL for the authorized Spotify IPA"
+        required: true
+        type: string
+      panel_build_run_id:
+        description: "Successful Build Minimal Panel Host run ID"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  package:
+    runs-on: macos-latest
+    defaults:
+      run:
+        shell: zsh {0}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install and validate Apple signing assets
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          set -euo pipefail
+          for value in BUILD_CERTIFICATE_BASE64 P12_PASSWORD PROVISIONING_PROFILE_BASE64 KEYCHAIN_PASSWORD TEAM_ID; do
+            test -n "${(P)value}"
+          done
+          CERTIFICATE_PATH="$RUNNER_TEMP/signing_certificate.p12"
+          COMPATIBLE_CERTIFICATE_PATH="$RUNNER_TEMP/signing_certificate_compatible.p12"
+          CERTIFICATE_PEM_PATH="$RUNNER_TEMP/signing_certificate.pem"
+          PROFILE_PATH="$GITHUB_WORKSPACE/embedded.mobileprovision"
+          PROFILE_PLIST="$RUNNER_TEMP/profile.plist"
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+          printf '%s' "$BUILD_CERTIFICATE_BASE64" | sed -E 's#^data:[^,]*;base64,##' | tr -d '\r\n[:space:]' | base64 --decode > "$CERTIFICATE_PATH"
+          printf '%s' "$PROVISIONING_PROFILE_BASE64" | sed -E 's#^data:[^,]*;base64,##' | tr -d '\r\n[:space:]' | base64 --decode > "$PROFILE_PATH"
+          openssl pkcs12 -in "$CERTIFICATE_PATH" -passin pass:"$P12_PASSWORD" -noout
+          security cms -D -i "$PROFILE_PATH" > "$PROFILE_PLIST"
+          PROFILE_TEAM=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.team-identifier' "$PROFILE_PLIST")
+          test "$PROFILE_TEAM" = "$TEAM_ID"
+          openssl pkcs12 -in "$CERTIFICATE_PATH" -passin pass:"$P12_PASSWORD" -nodes -out "$CERTIFICATE_PEM_PATH"
+          openssl pkcs12 -export -legacy -in "$CERTIFICATE_PEM_PATH" -out "$COMPATIBLE_CERTIFICATE_PATH" -passout pass:"$P12_PASSWORD"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$COMPATIBLE_CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | sed -n 's/.*"\(.*\)"/\1/p' | head -1)
+          test -n "$IDENTITY"
+          echo "SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "PROFILE_PLIST=$PROFILE_PLIST" >> "$GITHUB_ENV"
+
+      - name: Download and audit minimal panel artifact
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.panel_build_run_id }}
+          name: Minimal-PanelHost
+          path: ${{ github.workspace }}/panel-artifact
+
+      - name: Validate minimal panel binary
+        run: |
+          set -euo pipefail
+          PANEL="$GITHUB_WORKSPACE/panel-artifact/PanelHost.dylib"
+          test -s "$PANEL"
+          otool -L "$PANEL" | tee "$RUNNER_TEMP/panel-dependencies.txt"
+          ! grep -Eq 'Orion|CydiaSubstrate|SwiftProtobuf|EeveeSpotify' "$RUNNER_TEMP/panel-dependencies.txt"
+          grep -aFq 'MPNowPlayingInfoCenter' "$PANEL"
+          grep -aFq '0wwPcA6wtMf6HUMpIRdeP7' "$PANEL"
+          ! grep -aFq 'orion_init' "$PANEL"
+
+      - name: Build Mach-O cleanup tool
+        run: |
+          set -euo pipefail
+          git clone --recursive --depth 1 https://github.com/alexzielenski/optool.git "$RUNNER_TEMP/optool-source"
+          xcodebuild -project "$RUNNER_TEMP/optool-source/optool.xcodeproj" -target optool -configuration Release ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO SYMROOT="$RUNNER_TEMP/optool-build" build
+          OPTOOL=$(find "$RUNNER_TEMP/optool-build" -type f -name optool -perm +111 -print -quit)
+          test -x "$OPTOOL"
+          cp "$OPTOOL" "$RUNNER_TEMP/optool"
+          chmod +x "$RUNNER_TEMP/optool"
+
+      - name: Download and clean authorized base IPA
+        env:
+          SOURCE_URL: ${{ inputs.spotify_ipa_url }}
+        run: |
+          set -euo pipefail
+          if [[ "$SOURCE_URL" == https://download*.mediafire.com/* ]]; then
+            DOWNLOAD_URL="$SOURCE_URL"
+          else
+            DOWNLOAD_URL=$(curl -fsSL --retry 3 -A 'Mozilla/5.0' "$SOURCE_URL" | grep -oE 'https://download[0-9]+\.mediafire\.com[^" ]+' | sed -n '1p' | sed 's/&amp;/\&/g' || true)
+          fi
+          test -n "$DOWNLOAD_URL"
+          curl -fL --retry 5 --retry-all-errors -A 'Mozilla/5.0' "$DOWNLOAD_URL" -o "$RUNNER_TEMP/spotify-input.ipa"
+          unzip -tq "$RUNNER_TEMP/spotify-input.ipa"
+          rm -rf "$RUNNER_TEMP/spotify-input"
+          unzip -q "$RUNNER_TEMP/spotify-input.ipa" -d "$RUNNER_TEMP/spotify-input"
+          APP_DIR=$(find "$RUNNER_TEMP/spotify-input/Payload" -maxdepth 1 -type d -name '*.app' -print -quit)
+          test -n "$APP_DIR"
+          EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_DIR/Info.plist")
+          MAIN_EXECUTABLE="$APP_DIR/$EXECUTABLE"
+          test -s "$MAIN_EXECUTABLE"
+          for dependency in \
+            '@rpath/EeveeSpotify.dylib' \
+            '@rpath/Orion.framework/Orion' \
+            '@rpath/CydiaSubstrate.framework/CydiaSubstrate' \
+            '@rpath/SwiftProtobuf.framework/SwiftProtobuf' \
+            '@rpath/PanelHost.dylib'; do
+            if otool -L "$MAIN_EXECUTABLE" | grep -Fq "$dependency"; then
+              "$RUNNER_TEMP/optool" uninstall -p "$dependency" -t "$MAIN_EXECUTABLE"
+            fi
+          done
+          rm -rf \
+            "$APP_DIR/EeveeSpotify.bundle" \
+            "$APP_DIR/Frameworks/EeveeSpotify.dylib" \
+            "$APP_DIR/Frameworks/Orion.framework" \
+            "$APP_DIR/Frameworks/CydiaSubstrate.framework" \
+            "$APP_DIR/Frameworks/SwiftProtobuf.framework" \
+            "$APP_DIR/Frameworks/PanelHost.dylib" \
+            "$APP_DIR/PlugIns" "$APP_DIR/Watch" "$APP_DIR/AppClips"
+          mkdir -p "$APP_DIR/Frameworks"
+          cp "$GITHUB_WORKSPACE/panel-artifact/PanelHost.dylib" "$APP_DIR/Frameworks/PanelHost.dylib"
+          cp -R "$GITHUB_WORKSPACE/layout/Library/Application Support/EeveeSpotify.bundle" "$APP_DIR/PanelHost.bundle"
+          "$RUNNER_TEMP/optool" install -c load -p '@rpath/PanelHost.dylib' -t "$MAIN_EXECUTABLE"
+          test "$(otool -L "$MAIN_EXECUTABLE" | grep -Fc '@rpath/PanelHost.dylib')" -eq 1
+          for forbidden in EeveeSpotify Orion CydiaSubstrate SwiftProtobuf; do
+            ! otool -L "$MAIN_EXECUTABLE" | grep -Fq "$forbidden"
+          done
+          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
+          echo "MAIN_EXECUTABLE=$MAIN_EXECUTABLE" >> "$GITHUB_ENV"
+
+      - name: Apply profile identity and sign app
+        env:
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          set -euo pipefail
+          PROFILE_APP_ID=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$PROFILE_PLIST")
+          PROFILE_BUNDLE_ID="${PROFILE_APP_ID#${TEAM_ID}.}"
+          test -n "$PROFILE_BUNDLE_ID"
+          test "$PROFILE_BUNDLE_ID" != '*'
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $PROFILE_BUNDLE_ID" "$APP_DIR/Info.plist"
+          cp "$GITHUB_WORKSPACE/embedded.mobileprovision" "$APP_DIR/embedded.mobileprovision"
+          /usr/libexec/PlistBuddy -x -c 'Print :Entitlements' "$PROFILE_PLIST" > "$RUNNER_TEMP/app-entitlements.plist"
+          find "$APP_DIR" -type d -name _CodeSignature -prune -exec rm -rf {} +
+          find "$APP_DIR" -type f -name CodeResources -delete
+          while IFS= read -r dylib; do
+            codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$dylib"
+          done < <(find "$APP_DIR/Frameworks" -type f -name '*.dylib' -print)
+          while IFS= read -r framework; do
+            codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$framework"
+          done < <(find "$APP_DIR/Frameworks" -type d -name '*.framework' -print | sort -r)
+          codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none --entitlements "$RUNNER_TEMP/app-entitlements.plist" "$APP_DIR"
+
+      - name: Verify minimal launch surface and package IPA
+        env:
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          set -euo pipefail
+          codesign --verify --deep --strict --verbose=4 "$APP_DIR"
+          codesign -d --verbose=4 "$APP_DIR" 2>&1 | grep -q "TeamIdentifier=$TEAM_ID"
+          test "$(otool -L "$MAIN_EXECUTABLE" | grep -Fc '@rpath/PanelHost.dylib')" -eq 1
+          for forbidden in EeveeSpotify Orion CydiaSubstrate SwiftProtobuf; do
+            ! otool -L "$MAIN_EXECUTABLE" | grep -Fq "$forbidden"
+            test ! -e "$APP_DIR/Frameworks/$forbidden.dylib"
+            test ! -d "$APP_DIR/Frameworks/$forbidden.framework"
+          done
+          PANEL="$APP_DIR/Frameworks/PanelHost.dylib"
+          otool -L "$PANEL" > "$RUNNER_TEMP/final-panel-dependencies.txt"
+          ! grep -Eq 'Orion|CydiaSubstrate|SwiftProtobuf|EeveeSpotify' "$RUNNER_TEMP/final-panel-dependencies.txt"
+          grep -aFq 'MPNowPlayingInfoCenter' "$PANEL"
+          grep -aFq '0wwPcA6wtMf6HUMpIRdeP7' "$PANEL"
+          PROFILE_DEVICES=$(/usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' "$PROFILE_PLIST")
+          echo "$PROFILE_DEVICES" | grep -q '00008130-00041D61118B803A'
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          OUTPUT="$GITHUB_WORKSPACE/output/Painel-Sport-Minimal-Spotify-8.9.82.ipa"
+          (cd "$RUNNER_TEMP/spotify-input" && zip -qry "$OUTPUT" Payload)
+          unzip -tq "$OUTPUT"
+          test -s "$OUTPUT"
+          echo "OUTPUT_IPA=$OUTPUT" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Painel-Sport-Minimal-IPA
+          path: ${{ env.OUTPUT_IPA }}
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Publish minimal IPA Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: minimal-ipa-${{ github.run_number }}
+          name: Painel Sport Minimal IPA
+          body: Minimal hosted panel build without EeveeSpotify, Orion, CydiaSubstrate or SwiftProtobuf.
+          files: ${{ env.OUTPUT_IPA }}
+          fail_on_unmatched_files: true
+
+      - name: Remove temporary signing keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/build.keychain-db" 2>/dev/null || true
