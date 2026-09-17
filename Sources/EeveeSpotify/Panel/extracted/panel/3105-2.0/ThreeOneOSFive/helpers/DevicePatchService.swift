@@ -1,6 +1,9 @@
 import Foundation
 
 enum DevicePatchService {
+    private static let hostedAccessLock = NSLock()
+    private static var hostedAccessActivated = false
+
     static func apply(project: PatchProject) throws -> PatchTransactionReceipt {
         let bundleIDs = orderedBundleIdentifiers(in: project)
         return try withResolvedContainers(bundleIDs: bundleIDs) { roots in
@@ -83,29 +86,61 @@ enum DevicePatchService {
         bundleIDs: [String],
         operation: ([String: URL]) throws -> T
     ) throws -> T {
+        if let roots = resolveContainers(bundleIDs: bundleIDs) {
+            return try operation(roots)
+        }
+
+        if HostedPanelContext.isHostedInSpotify,
+           activateHostedAccessOnDemand(),
+           let roots = resolveContainers(bundleIDs: bundleIDs) {
+            return try operation(roots)
+        }
+
+        let missingBundleID = bundleIDs.first {
+            ContainerStore.resolveAppContainerPath(bundleID: $0) == nil
+        } ?? bundleIDs.first ?? "unknown"
+        throw PatchPackageError.targetAppUnavailable(missingBundleID)
+    }
+
+    private static func resolveContainers(bundleIDs: [String]) -> [String: URL]? {
         var roots: [String: URL] = [:]
-        let hostedBundleID = HostedPanelContext.hostBundleIdentifier
-
         for bundleID in bundleIDs {
-            if let path = ContainerStore.resolveAppContainerPath(bundleID: bundleID),
-               ContainerStore.isApplicationContainerPath(path) {
-                roots[bundleID] = PatchPathValidator.canonicalFileURL(
-                    URL(fileURLWithPath: path, isDirectory: true)
-                )
-                continue
-            }
-
-            guard HostedPanelContext.isHostedInSpotify,
-                  bundleIDs.count == 1,
-                  let hostedBundleID,
-                  let hostedPath = ContainerStore.resolveAppContainerPath(bundleID: hostedBundleID),
-                  ContainerStore.isApplicationContainerPath(hostedPath) else {
-                throw PatchPackageError.targetAppUnavailable(bundleID)
+            guard let path = ContainerStore.resolveAppContainerPath(bundleID: bundleID),
+                  ContainerStore.isApplicationContainerPath(path) else {
+                return nil
             }
             roots[bundleID] = PatchPathValidator.canonicalFileURL(
-                URL(fileURLWithPath: hostedPath, isDirectory: true)
+                URL(fileURLWithPath: path, isDirectory: true)
             )
         }
-        return try operation(roots)
+        return roots
+    }
+
+    private static func activateHostedAccessOnDemand() -> Bool {
+        hostedAccessLock.lock()
+        defer { hostedAccessLock.unlock() }
+
+        if hostedAccessActivated {
+            return true
+        }
+        if KernelExploit.requiresSandboxEscape, KernelExploit.hasSandboxAccess() {
+            hostedAccessActivated = true
+            return true
+        }
+
+        let version = AppInfo.versionTuple
+        guard ExploitSupportPolicy.isSupported(
+            major: version.major,
+            minor: version.minor,
+            patch: version.patch,
+            build: AppInfo.osBuild
+        ) else {
+            log("patch: hosted access unavailable on this iOS build")
+            return false
+        }
+
+        log("patch: activating container access on explicit apply command")
+        hostedAccessActivated = KernelExploit.run()
+        return hostedAccessActivated
     }
 }
