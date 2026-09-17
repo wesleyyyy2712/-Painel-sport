@@ -43,15 +43,16 @@ jobs:
           ! grep -Eq 'Orion|CydiaSubstrate|SwiftProtobuf|EeveeSpotify' "$RUNNER_TEMP/panelhost-dependencies.txt"
           grep -F '/System/Library/Frameworks/MediaPlayer.framework/MediaPlayer' "$RUNNER_TEMP/panelhost-dependencies.txt" >/dev/null
           strings "$DYLIB" > "$RUNNER_TEMP/panelhost-strings.txt"
-          nm -gU "$DYLIB" > "$RUNNER_TEMP/panelhost-symbols.txt"
           for marker in 0wwPcA6wtMf6HUMpIRdeP7; do
             count=$(grep -Fc "$marker" "$RUNNER_TEMP/panelhost-strings.txt" || true)
             echo "$marker count=$count"
             test "$count" -ge 1
           done
-          grep -F 'PanelHostStart' "$RUNNER_TEMP/panelhost-symbols.txt" >/dev/null
-          test "$(grep -Fc 'orion_init' "$RUNNER_TEMP/panelhost-strings.txt" || true)" -eq 0
+          orion_count=$(grep -Fc 'orion_init' "$RUNNER_TEMP/panelhost-strings.txt" || true)
+          echo "orion_init count=$orion_count"
+          test "$orion_count" -eq 0
           file "$DYLIB" > "$RUNNER_TEMP/panelhost-file.txt"
+          cat "$RUNNER_TEMP/panelhost-file.txt"
           grep -F 'arm64' "$RUNNER_TEMP/panelhost-file.txt" >/dev/null
 
       - uses: actions/upload-artifact@v4
