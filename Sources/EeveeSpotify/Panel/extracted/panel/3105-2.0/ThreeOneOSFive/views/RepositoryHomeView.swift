@@ -25,7 +25,7 @@ struct RepositoryHomeView: View {
                 Color.black
                     .ignoresSafeArea()
 
-                Image("HomeBackground")
+                Image("HomeBackground", bundle: HostedPanelContext.resourceBundle)
                     .resizable()
                     .scaledToFit()
                     .overlay(Color.black.opacity(0.18))

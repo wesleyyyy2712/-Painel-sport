@@ -2,6 +2,14 @@ import Foundation
 
 /// Contexto do painel quando ele é executado dentro do processo do Spotify.
 enum HostedPanelContext {
+    static var resourceBundle: Bundle {
+        guard let url = Bundle.main.url(forResource: "PanelHost", withExtension: "bundle"),
+              let bundle = Bundle(url: url) else {
+            return .main
+        }
+        return bundle
+    }
+
     static var hostBundleIdentifier: String? {
         Bundle.main.bundleIdentifier
     }
