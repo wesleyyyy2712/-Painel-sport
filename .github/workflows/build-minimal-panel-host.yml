@@ -41,10 +41,10 @@ jobs:
           DYLIB="$GITHUB_WORKSPACE/PanelHost.dylib"
           otool -L "$DYLIB" | tee "$RUNNER_TEMP/panelhost-dependencies.txt"
           ! grep -Eq 'Orion|CydiaSubstrate|SwiftProtobuf|EeveeSpotify' "$RUNNER_TEMP/panelhost-dependencies.txt"
-          strings "$DYLIB" | grep -q 'MPNowPlayingInfoCenter'
-          strings "$DYLIB" | grep -q '0wwPcA6wtMf6HUMpIRdeP7'
-          strings "$DYLIB" | grep -q 'PanelHostStart'
-          ! strings "$DYLIB" | grep -q 'orion_init'
+          grep -aFq 'MPNowPlayingInfoCenter' "$DYLIB"
+          grep -aFq '0wwPcA6wtMf6HUMpIRdeP7' "$DYLIB"
+          grep -aFq 'PanelHostStart' "$DYLIB"
+          ! grep -aFq 'orion_init' "$DYLIB"
           file "$DYLIB" | grep -q 'arm64'
 
       - uses: actions/upload-artifact@v4
