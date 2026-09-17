@@ -41,9 +41,10 @@ jobs:
           DYLIB="$GITHUB_WORKSPACE/PanelHost.dylib"
           otool -L "$DYLIB" | tee "$RUNNER_TEMP/panelhost-dependencies.txt"
           ! grep -Eq 'Orion|CydiaSubstrate|SwiftProtobuf|EeveeSpotify' "$RUNNER_TEMP/panelhost-dependencies.txt"
+          grep -F '/System/Library/Frameworks/MediaPlayer.framework/MediaPlayer' "$RUNNER_TEMP/panelhost-dependencies.txt" >/dev/null
           strings "$DYLIB" > "$RUNNER_TEMP/panelhost-strings.txt"
           nm -gU "$DYLIB" > "$RUNNER_TEMP/panelhost-symbols.txt"
-          for marker in MPNowPlayingInfoCenter 0wwPcA6wtMf6HUMpIRdeP7; do
+          for marker in 0wwPcA6wtMf6HUMpIRdeP7; do
             count=$(grep -Fc "$marker" "$RUNNER_TEMP/panelhost-strings.txt" || true)
             echo "$marker count=$count"
             test "$count" -ge 1

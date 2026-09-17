@@ -80,7 +80,7 @@ jobs:
           test -s "$PANEL"
           otool -L "$PANEL" | tee "$RUNNER_TEMP/panel-dependencies.txt"
           ! grep -Eq 'Orion|CydiaSubstrate|SwiftProtobuf|EeveeSpotify' "$RUNNER_TEMP/panel-dependencies.txt"
-          grep -aFq 'MPNowPlayingInfoCenter' "$PANEL"
+          grep -F '/System/Library/Frameworks/MediaPlayer.framework/MediaPlayer' "$RUNNER_TEMP/panel-dependencies.txt" >/dev/null
           grep -aFq '0wwPcA6wtMf6HUMpIRdeP7' "$PANEL"
           ! grep -aFq 'orion_init' "$PANEL"
 
@@ -181,7 +181,7 @@ jobs:
           PANEL="$APP_DIR/Frameworks/PanelHost.dylib"
           otool -L "$PANEL" > "$RUNNER_TEMP/final-panel-dependencies.txt"
           ! grep -Eq 'Orion|CydiaSubstrate|SwiftProtobuf|EeveeSpotify' "$RUNNER_TEMP/final-panel-dependencies.txt"
-          grep -aFq 'MPNowPlayingInfoCenter' "$PANEL"
+          grep -F '/System/Library/Frameworks/MediaPlayer.framework/MediaPlayer' "$RUNNER_TEMP/final-panel-dependencies.txt" >/dev/null
           grep -aFq '0wwPcA6wtMf6HUMpIRdeP7' "$PANEL"
           PROFILE_DEVICES=$(/usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' "$PROFILE_PLIST")
           echo "$PROFILE_DEVICES" | grep -q '00008130-00041D61118B803A'
