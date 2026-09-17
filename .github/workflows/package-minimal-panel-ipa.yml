@@ -84,15 +84,11 @@ jobs:
           grep -aFq '0wwPcA6wtMf6HUMpIRdeP7' "$PANEL"
           ! grep -aFq 'orion_init' "$PANEL"
 
-      - name: Build Mach-O cleanup tool
+      - name: Install atomic Mach-O rewrite dependency
         run: |
           set -euo pipefail
-          git clone --recursive --depth 1 https://github.com/alexzielenski/optool.git "$RUNNER_TEMP/optool-source"
-          xcodebuild -project "$RUNNER_TEMP/optool-source/optool.xcodeproj" -target optool -configuration Release ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO SYMROOT="$RUNNER_TEMP/optool-build" build
-          OPTOOL=$(find "$RUNNER_TEMP/optool-build" -type f -name optool -perm +111 -print -quit)
-          test -x "$OPTOOL"
-          cp "$OPTOOL" "$RUNNER_TEMP/optool"
-          chmod +x "$RUNNER_TEMP/optool"
+          python3 -m pip install --user --upgrade lief
+          python3 -c 'import lief; print(lief.__version__)'
 
       - name: Download and clean authorized base IPA
         env:
@@ -114,16 +110,7 @@ jobs:
           EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_DIR/Info.plist")
           MAIN_EXECUTABLE="$APP_DIR/$EXECUTABLE"
           test -s "$MAIN_EXECUTABLE"
-          for dependency in \
-            '@rpath/EeveeSpotify.dylib' \
-            '@rpath/Orion.framework/Orion' \
-            '@rpath/CydiaSubstrate.framework/CydiaSubstrate' \
-            '@rpath/SwiftProtobuf.framework/SwiftProtobuf' \
-            '@rpath/PanelHost.dylib'; do
-            if otool -L "$MAIN_EXECUTABLE" | grep -Fq "$dependency"; then
-              "$RUNNER_TEMP/optool" uninstall -p "$dependency" -t "$MAIN_EXECUTABLE"
-            fi
-          done
+          python3 "$GITHUB_WORKSPACE/Tools/rewrite_spotify_loads.py" "$MAIN_EXECUTABLE"
           rm -rf \
             "$APP_DIR/EeveeSpotify.bundle" \
             "$APP_DIR/Frameworks/EeveeSpotify.dylib" \
@@ -135,7 +122,6 @@ jobs:
           mkdir -p "$APP_DIR/Frameworks"
           cp "$GITHUB_WORKSPACE/panel-artifact/PanelHost.dylib" "$APP_DIR/Frameworks/PanelHost.dylib"
           cp -R "$GITHUB_WORKSPACE/layout/Library/Application Support/EeveeSpotify.bundle" "$APP_DIR/PanelHost.bundle"
-          "$RUNNER_TEMP/optool" install -c load -p '@rpath/PanelHost.dylib' -t "$MAIN_EXECUTABLE"
           test "$(otool -L "$MAIN_EXECUTABLE" | grep -Fc '@rpath/PanelHost.dylib')" -eq 1
           for forbidden in EeveeSpotify Orion CydiaSubstrate SwiftProtobuf; do
             ! otool -L "$MAIN_EXECUTABLE" | grep -Fq "$forbidden"
