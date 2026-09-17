@@ -87,8 +87,10 @@ jobs:
       - name: Install atomic Mach-O rewrite dependency
         run: |
           set -euo pipefail
-          python3 -m pip install --user --upgrade lief
-          python3 -c 'import lief; print(lief.__version__)'
+          python3 -m venv "$RUNNER_TEMP/lief-venv"
+          "$RUNNER_TEMP/lief-venv/bin/python" -m pip install --upgrade pip lief
+          "$RUNNER_TEMP/lief-venv/bin/python" -c 'import lief; print(lief.__version__)'
+          echo "LIEF_PYTHON=$RUNNER_TEMP/lief-venv/bin/python" >> "$GITHUB_ENV"
 
       - name: Download and clean authorized base IPA
         env:
@@ -110,7 +112,7 @@ jobs:
           EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_DIR/Info.plist")
           MAIN_EXECUTABLE="$APP_DIR/$EXECUTABLE"
           test -s "$MAIN_EXECUTABLE"
-          python3 "$GITHUB_WORKSPACE/Tools/rewrite_spotify_loads.py" "$MAIN_EXECUTABLE"
+          "$LIEF_PYTHON" "$GITHUB_WORKSPACE/Tools/rewrite_spotify_loads.py" "$MAIN_EXECUTABLE"
           rm -rf \
             "$APP_DIR/EeveeSpotify.bundle" \
             "$APP_DIR/Frameworks/EeveeSpotify.dylib" \
