@@ -1,4 +1,3 @@
-import EeveeSpotifyC
 import Foundation
 
 @_silgen_name("wallpaper_zip_extract_entry")
