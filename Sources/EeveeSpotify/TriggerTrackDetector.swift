@@ -34,13 +34,14 @@ final class TriggerTrackDetector {
 
     private func poll() {
         guard let player else { return }
-        let identifier = player.currentTrack()?.URI().spt_trackIdentifier()
+        let rawIdentifier = player.currentTrack()?.URI().spt_trackIdentifier()
+        let identifier = TriggerConfiguration.normalizedTrackIdentifier(rawIdentifier)
         guard identifier != lastIdentifier else { return }
         lastIdentifier = identifier
 
         guard TriggerConfiguration.isEnabled else { return }
 
-        if identifier == TriggerConfiguration.trackIdentifier {
+        if TriggerConfiguration.matches(identifier) {
             guard didOpenForIdentifier != identifier else { return }
             didOpenForIdentifier = identifier
             TriggerPresentationCoordinator.shared.presentPanelIfNeeded()

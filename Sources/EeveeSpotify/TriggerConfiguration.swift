@@ -13,4 +13,20 @@ enum TriggerConfiguration {
     static var isEnabled: Bool {
         !trackIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+
+    static func normalizedTrackIdentifier(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if trimmed == trackIdentifier { return trimmed }
+
+        let withoutQuery = trimmed.split(separator: "?", maxSplits: 1).first.map(String.init) ?? trimmed
+        let components = withoutQuery.split(whereSeparator: { $0 == ":" || $0 == "/" })
+        return components.last.map(String.init)
+    }
+
+    static func matches(_ value: String?) -> Bool {
+        normalizedTrackIdentifier(value) == trackIdentifier
+    }
 }
