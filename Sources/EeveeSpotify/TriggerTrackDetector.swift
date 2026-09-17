@@ -2,6 +2,11 @@ import Foundation
 import MediaPlayer
 import UIKit
 
+@_cdecl("PanelHostStart")
+func PanelHostStart() {
+    TriggerTrackDetector.shared.start()
+}
+
 /// Observa os metadados públicos de reprodução publicados pelo próprio Spotify.
 /// Não chama classes, ivars ou seletores privados do aplicativo.
 final class TriggerTrackDetector {

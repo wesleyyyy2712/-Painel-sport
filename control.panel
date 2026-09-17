@@ -1,0 +1,9 @@
+Package: com.painelsport.host
+Name: Painel Sport Host
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: Painel 3105 hospedado no Spotify com detector publico de reproducao.
+Maintainer: Painel Sport
+Author: Painel Sport
+Section: Tweaks
+Depends: firmware (>= 16.0)

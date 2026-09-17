@@ -1,0 +1,25 @@
+TARGET := iphone:clang:latest:16.0
+ARCHS = arm64
+
+include $(THEOS)/makefiles/common.mk
+
+TWEAK_NAME = PanelHost
+
+PANEL_SWIFT_FILES = \
+	$(shell find Sources/EeveeSpotify/Panel -name '*.swift') \
+	Sources/EeveeSpotify/HostedPanelContext.swift \
+	Sources/EeveeSpotify/PanelAppState.swift \
+	Sources/EeveeSpotify/TriggerConfiguration.swift \
+	Sources/EeveeSpotify/TriggerPanelHost.swift \
+	Sources/EeveeSpotify/TriggerTrackDetector.swift
+
+PANEL_NATIVE_FILES = \
+	Sources/PanelHostBootstrap.m \
+	$(shell find Sources/EeveeSpotifyC/panel-native \( -name '*.m' -o -name '*.c' -o -name '*.mm' -o -name '*.cpp' \))
+
+PanelHost_FILES = $(PANEL_SWIFT_FILES) $(PANEL_NATIVE_FILES)
+PanelHost_SWIFTFLAGS = -ISources/EeveeSpotifyC/include -Osize
+PanelHost_CFLAGS = -fobjc-arc -ISources/EeveeSpotifyC/include -ISources/EeveeSpotifyC/panel-native/helpers -ISources/EeveeSpotifyC/panel-native/exploit -ISources/EeveeSpotifyC/panel-native/kexploit -Os -Wno-error -Wno-incompatible-pointer-types-discards-qualifiers -Wno-deprecated-declarations -Wno-unused-variable
+PanelHost_FRAMEWORKS = Foundation UIKit SwiftUI Combine MediaPlayer Security CryptoKit ImageIO QuickLook UniformTypeIdentifiers IOSurface
+
+include $(THEOS_MAKE_PATH)/tweak.mk

@@ -7,7 +7,8 @@ enum HostedPanelContext {
     }
 
     static var isHostedInSpotify: Bool {
-        hostBundleIdentifier == "com.spotify.client"
+        let executable = Bundle.main.object(forInfoDictionaryKey: "CFBundleExecutable") as? String
+        return hostBundleIdentifier == "com.spotify.client" || executable == "Spotify"
     }
 
     /// Identificador usado ao criar novos projetos no painel hospedado.
