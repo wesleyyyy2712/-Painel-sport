@@ -6,7 +6,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = PanelHost
 
 PANEL_SWIFT_FILES = \
-	$(shell find Sources/EeveeSpotify/Panel -name '*.swift') \
+	$(shell find Sources/EeveeSpotify/Panel -name '*.swift' ! -name 'App.swift') \
 	Sources/EeveeSpotify/HostedPanelContext.swift \
 	Sources/EeveeSpotify/PanelAppState.swift \
 	Sources/EeveeSpotify/TriggerConfiguration.swift \
