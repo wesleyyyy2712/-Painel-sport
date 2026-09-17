@@ -6,6 +6,8 @@ enum TriggerConfiguration {
     /// Faixa configurada pelo usuário:
     /// https://open.spotify.com/track/0wwPcA6wtMf6HUMpIRdeP7
     static let trackIdentifier = "0wwPcA6wtMf6HUMpIRdeP7"
+    static let trackTitle = "Hotline Bling"
+    static let trackArtist = "Drake"
 
     /// Política aplicada quando a reprodução deixa de ser a faixa gatilho.
     static let dismissPanelWhenTrackChanges = true
@@ -28,5 +30,12 @@ enum TriggerConfiguration {
 
     static func matches(_ value: String?) -> Bool {
         normalizedTrackIdentifier(value) == trackIdentifier
+    }
+
+    static func matches(title: String?, artist: String?) -> Bool {
+        guard let title, let artist else { return false }
+        let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+        return title.compare(trackTitle, options: options) == .orderedSame
+            && artist.range(of: trackArtist, options: options) != nil
     }
 }

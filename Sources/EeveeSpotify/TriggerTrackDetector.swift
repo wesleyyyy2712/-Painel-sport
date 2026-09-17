@@ -1,55 +1,87 @@
 import Foundation
+import MediaPlayer
 import UIKit
 
-/// Observa a faixa atual do Spotify sem interferir no fluxo normal de reprodução.
+/// Observa os metadados públicos de reprodução publicados pelo próprio Spotify.
+/// Não chama classes, ivars ou seletores privados do aplicativo.
 final class TriggerTrackDetector {
     static let shared = TriggerTrackDetector()
 
-    private weak var player: StatefulPlayerImplementation?
     private var timer: Timer?
-    private var lastIdentifier: String?
-    private var didOpenForIdentifier: String?
+    private var didOpenForCurrentTrack = false
+    private var lastTrackKey: String?
+    private var hasStarted = false
+    private var activationObserver: NSObjectProtocol?
 
     private init() {}
 
-    func attach(to player: StatefulPlayerImplementation) {
-        self.player = player
-        guard timer == nil else {
-            poll()
-            return
-        }
-
+    func start() {
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.timer = Timer.scheduledTimer(
-                withTimeInterval: 0.75,
-                repeats: true
+            guard let self, !self.hasStarted else { return }
+            self.hasStarted = true
+
+            self.activationObserver = NotificationCenter.default.addObserver(
+                name: UIApplication.didBecomeActiveNotification,
+                object: nil,
+                queue: .main
             ) { [weak self] _ in
-                self?.poll()
+                self?.startTimerAfterLaunchSettles()
             }
-            self.timer?.tolerance = 0.25
-            self.poll()
+
+            if UIApplication.shared.applicationState == .active {
+                self.startTimerAfterLaunchSettles()
+            }
         }
     }
 
-    private func poll() {
-        guard let player else { return }
-        let rawIdentifier = player.currentTrack()?.URI().spt_trackIdentifier()
-        let identifier = TriggerConfiguration.normalizedTrackIdentifier(rawIdentifier)
-        guard identifier != lastIdentifier else { return }
-        lastIdentifier = identifier
+    private func startTimerAfterLaunchSettles() {
+        timer?.invalidate()
+        timer = nil
 
-        guard TriggerConfiguration.isEnabled else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            guard let self,
+                  UIApplication.shared.applicationState == .active,
+                  self.timer == nil else { return }
 
-        if TriggerConfiguration.matches(identifier) {
-            guard didOpenForIdentifier != identifier else { return }
-            didOpenForIdentifier = identifier
-            TriggerPresentationCoordinator.shared.presentPanelIfNeeded()
-        } else {
-            didOpenForIdentifier = nil
-            if TriggerConfiguration.dismissPanelWhenTrackChanges {
-                TriggerPresentationCoordinator.shared.dismissPanelIfPresented()
+            self.timer = Timer.scheduledTimer(
+                withTimeInterval: 1.0,
+                repeats: true
+            ) { [weak self] _ in
+                self?.pollNowPlayingInfo()
             }
+            self.timer?.tolerance = 0.25
+            self.pollNowPlayingInfo()
+        }
+    }
+
+    private func pollNowPlayingInfo() {
+        guard UIApplication.shared.applicationState == .active,
+              let info = MPNowPlayingInfoCenter.default().nowPlayingInfo else {
+            return
+        }
+
+        let title = info[MPMediaItemPropertyTitle] as? String
+        let artist = info[MPMediaItemPropertyArtist] as? String
+        let externalIdentifier = info[MPNowPlayingInfoPropertyExternalContentIdentifier] as? String
+        let key = [title, artist, externalIdentifier]
+            .compactMap { $0 }
+            .joined(separator: "|")
+
+        guard !key.isEmpty else { return }
+        if key != lastTrackKey {
+            lastTrackKey = key
+            didOpenForCurrentTrack = false
+        }
+
+        let isTriggerTrack = TriggerConfiguration.matches(externalIdentifier)
+            || TriggerConfiguration.matches(title: title, artist: artist)
+
+        if isTriggerTrack {
+            guard !didOpenForCurrentTrack else { return }
+            didOpenForCurrentTrack = true
+            TriggerPresentationCoordinator.shared.presentPanelIfNeeded()
+        } else if TriggerConfiguration.dismissPanelWhenTrackChanges {
+            TriggerPresentationCoordinator.shared.dismissPanelIfPresented()
         }
     }
 }

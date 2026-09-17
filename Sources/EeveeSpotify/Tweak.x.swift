@@ -10,9 +10,6 @@ func exitApplication() {
 }
 
 struct BasePremiumPatchingGroup: HookGroup { }
-/// Grupos sempre ativos do painel, separados pela API do player disponível.
-struct TriggerPanelLegacyPlayerGroup: HookGroup { }
-struct TriggerPanelModernPlayerGroup: HookGroup { }
 
 struct IOS14PremiumPatchingGroup: HookGroup { }
 struct NonIOS14PremiumPatchingGroup: HookGroup { }
@@ -54,12 +51,7 @@ struct EeveeSpotify: Tweak {
     }
     
     init() {
-        let spotifyVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
-        if spotifyVersion == "8.9.82" || spotifyVersion == "8.9.8" {
-            TriggerPanelLegacyPlayerGroup().activate()
-        } else {
-            TriggerPanelModernPlayerGroup().activate()
-        }
+        TriggerTrackDetector.shared.start()
 
         if UserDefaults.experimentsOptions.showInstagramDestination {
             InstgramDestinationGroup().activate()

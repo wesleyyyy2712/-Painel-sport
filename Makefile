@@ -10,6 +10,7 @@ EeveeSpotify_FILES = $(shell find Sources/EeveeSpotify -name '*.swift') $(shell 
 EeveeSpotify_SWIFTFLAGS = -ISources/EeveeSpotifyC/include -Osize
 SWIFTPROTOBUF_VERSION ?= 1.29.0
 EeveeSpotify_EXTRA_FRAMEWORKS = SwiftProtobuf
+EeveeSpotify_FRAMEWORKS = MediaPlayer
 EeveeSpotify_CFLAGS = -fobjc-arc -ISources/EeveeSpotifyC/include -Os -Wno-error -Wno-incompatible-pointer-types-discards-qualifiers -Wno-deprecated-declarations -Wno-unused-variable
 
 include $(THEOS_MAKE_PATH)/tweak.mk
