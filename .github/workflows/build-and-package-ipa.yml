@@ -50,6 +50,7 @@ jobs:
           ar -x swiftprotobuf.deb
           tar -xvf data.tar.lzma
           cp -R Library/Frameworks/SwiftProtobuf.framework "$THEOS/lib/"
+          echo "SWIFT_PROTOBUF_DEB=$GITHUB_WORKSPACE/swiftprotobuf/swiftprotobuf.deb" >> "$GITHUB_ENV"
 
       - name: Build tweak package
         run: |
@@ -100,7 +101,7 @@ jobs:
           set -euo pipefail
           ./ivinject-arm64 spotify-input.ipa Painel-Sport-Spotify-8.9.82.ipa \
             -i "$TWEAK_DEB" \
-            "https://github.com/whoeevee/swift-protobuf/releases/download/${SWIFTPROTOBUF_VERSION}/org.swift.protobuf.swiftprotobuf_${SWIFTPROTOBUF_VERSION}_iphoneos-arm.deb" \
+            "$SWIFT_PROTOBUF_DEB" \
             "$OPENSPOTIFYSAFARIEXTENSION" \
             -s - -d --level Optimal
           unzip -tq Painel-Sport-Spotify-8.9.82.ipa
