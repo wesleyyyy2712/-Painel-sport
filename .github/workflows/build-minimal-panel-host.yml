@@ -30,15 +30,15 @@ jobs:
       - name: Build minimal panel host
         run: |
           set -euo pipefail
-          make -f Makefile.panel clean all FINALPACKAGE=1 THEOS_CODESIGN=true
-          DYLIB=$(find .theos/obj -type f -name 'Spotify3105Trigger.dylib' -print -quit)
+          make -f Makefile.panel clean all FINALPACKAGE=1
+          DYLIB=$(find .theos/obj -type f -name PanelHost.dylib -print -quit)
           test -s "$DYLIB"
-          cp "$DYLIB" "$GITHUB_WORKSPACE/Spotify3105Trigger.dylib"
+          cp "$DYLIB" "$GITHUB_WORKSPACE/PanelHost.dylib"
 
       - name: Audit dependencies and launch surface
         run: |
           set -euo pipefail
-          DYLIB="$GITHUB_WORKSPACE/Spotify3105Trigger.dylib"
+          DYLIB="$GITHUB_WORKSPACE/PanelHost.dylib"
           otool -L "$DYLIB" | tee "$RUNNER_TEMP/panelhost-dependencies.txt"
           ! grep -Eq 'Orion|CydiaSubstrate|SwiftProtobuf|EeveeSpotify' "$RUNNER_TEMP/panelhost-dependencies.txt"
           grep -F '/System/Library/Frameworks/MediaPlayer.framework/MediaPlayer' "$RUNNER_TEMP/panelhost-dependencies.txt" >/dev/null
@@ -58,6 +58,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: Minimal-PanelHost
-          path: Spotify3105Trigger.dylib
+          path: PanelHost.dylib
           if-no-files-found: error
           compression-level: 0

@@ -1,29 +1,85 @@
-import Foundation
+import SwiftUI
 import UIKit
 
-/// Integração mínima com o Spotify: o Spotify só dispara a abertura do 3105.
-/// A interface, o estado e a aplicação permanecem no app 3105 standalone.
+/// Raiz do painel convertido de aplicativo independente para módulo hospedado.
+struct TriggerPanelHost: View {
+    @StateObject private var appState = AppState()
+    @StateObject private var patchDraftCoordinator = PatchDraftCoordinator()
+    @StateObject private var fileOperationCoordinator = FileOperationCoordinator()
+    @StateObject private var patchStore = PatchProjectStore()
+    @StateObject private var repositoryStore = PackageRepositoryStore()
+
+    var body: some View {
+        ContentView()
+            .environmentObject(appState)
+            .environmentObject(patchDraftCoordinator)
+            .environmentObject(fileOperationCoordinator)
+            .environmentObject(patchStore)
+            .environmentObject(repositoryStore)
+            .environment(\.appLanguage, .portuguese)
+            .environment(\.locale, AppLanguage.portuguese.locale)
+    }
+}
+
 final class TriggerPresentationCoordinator {
     static let shared = TriggerPresentationCoordinator()
 
-    private var isOpening = false
+    private weak var presentedController: UIViewController?
+    private var isPresenting = false
 
     private init() {}
 
     func presentPanelIfNeeded() {
-        guard !isOpening else { return }
-        guard let url = URL(string: "threeoneosfive://trigger") else { return }
-
-        isOpening = true
+        guard !isPresenting else { return }
         DispatchQueue.main.async { [weak self] in
-            UIApplication.shared.open(url, options: [:]) { _ in
-                DispatchQueue.main.async {
-                    self?.isOpening = false
-                }
+            guard let self, !self.isPresenting else { return }
+            guard UIApplication.shared.applicationState == .active,
+                  let presenter = self.topViewController(),
+                  presenter.viewIfLoaded?.window != nil,
+                  presenter.presentedViewController == nil else {
+                self.retryPresentation()
+                return
             }
+
+            let controller = UIHostingController(rootView: TriggerPanelHost())
+            controller.modalPresentationStyle = .pageSheet
+            controller.title = "3105"
+            if let sheet = controller.sheetPresentationController {
+                sheet.detents = [.large()]
+                sheet.prefersGrabberVisible = true
+            }
+
+            self.isPresenting = true
+            self.presentedController = controller
+            presenter.present(controller, animated: true)
         }
     }
 
-    /// O 3105 é um app independente; trocar de música não deve fechar sua interface.
-    func dismissPanelIfPresented() {}
+    private func retryPresentation() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            self?.presentPanelIfNeeded()
+        }
+    }
+
+    func dismissPanelIfPresented() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.presentedController?.dismiss(animated: true)
+            self.presentedController = nil
+            self.isPresenting = false
+        }
+    }
+
+    private func topViewController() -> UIViewController? {
+        let windows = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+        let keyWindow = windows.first(where: { $0.isKeyWindow })
+        let root = keyWindow?.rootViewController ?? windows.first?.rootViewController
+        var current = root
+        while let presented = current?.presentedViewController {
+            current = presented
+        }
+        return current
+    }
 }

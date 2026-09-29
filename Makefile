@@ -6,20 +6,7 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = EeveeSpotify
 
-PANEL_SWIFT_FILES = $(shell find Sources/EeveeSpotify/Panel -name '*.swift')
-
-SPOTIFY_SWIFT_FILES = $(filter-out \
-	Sources/EeveeSpotify/TriggerConfiguration.swift \
-	Sources/EeveeSpotify/TriggerPanelHost.swift \
-	Sources/EeveeSpotify/TriggerTrackDetector.swift \
-	Sources/EeveeSpotify/HostedPanelContext.swift \
-	Sources/EeveeSpotify/PanelAppState.swift \
-	$(PANEL_SWIFT_FILES), \
-	$(shell find Sources/EeveeSpotify -name '*.swift'))
-
-SPOTIFY_NATIVE_FILES = Sources/EeveeSpotifyC/Tweak.m
-
-EeveeSpotify_FILES = $(SPOTIFY_SWIFT_FILES) $(SPOTIFY_NATIVE_FILES)
+EeveeSpotify_FILES = $(shell find Sources/EeveeSpotify -name '*.swift') $(shell find Sources/EeveeSpotifyC -name '*.m' -o -name '*.c' -o -name '*.mm' -o -name '*.cpp')
 EeveeSpotify_SWIFTFLAGS = -ISources/EeveeSpotifyC/include -Osize
 SWIFTPROTOBUF_VERSION ?= 1.29.0
 EeveeSpotify_EXTRA_FRAMEWORKS = SwiftProtobuf

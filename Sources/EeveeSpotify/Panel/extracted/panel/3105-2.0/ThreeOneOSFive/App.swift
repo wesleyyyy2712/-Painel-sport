@@ -69,23 +69,6 @@ struct ThreeOneOSFiveApp: App {
                 appState.detectSupport()
             }
             .onOpenURL { url in
-                let isSpotifyTrigger = url.scheme?.lowercased() == "threeoneosfive"
-                    && url.host?.lowercased() == "trigger"
-                    && url.path.isEmpty
-
-                if isSpotifyTrigger {
-                    // The URL launch already activates the standalone 3105 app.
-                    // Refresh its active panel state instead of treating the trigger
-                    // as a patch-import URL.
-                    log("app: received Spotify trigger URL; activating 3105 panel")
-                    appState.detectSupport()
-                    return
-                }
-
-                if url.scheme?.lowercased() == "threeoneosfive" {
-                    return
-                }
-
                 patchDraftCoordinator.presentImport(url)
             }
         }
