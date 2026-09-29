@@ -67,6 +67,26 @@ jobs:
           chmod +x ivinject-arm64
           ./ivinject-arm64 --help | grep -q -- '--profile' || true
 
+      - name: Build and install insert-dylib
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/Tyilo/insert_dylib.git insert-dylib-source
+          xcodebuild \
+            -project insert-dylib-source/insert_dylib.xcodeproj \
+            -target insert_dylib \
+            -configuration Release \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            SYMROOT="$RUNNER_TEMP/insert-dylib-build" \
+            build
+          INSERT_DYLIB=$(find "$RUNNER_TEMP/insert-dylib-build" -type f -name insert_dylib -perm -111 -print -quit)
+          test -n "$INSERT_DYLIB"
+          cp "$INSERT_DYLIB" "$RUNNER_TEMP/insert-dylib"
+          chmod +x "$RUNNER_TEMP/insert-dylib"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+          test "$(command -v insert-dylib)" = "$RUNNER_TEMP/insert-dylib"
+
       - name: Download and validate Spotify IPA
         env:
           SOURCE_URL: ${{ inputs.spotify_ipa_url }}
