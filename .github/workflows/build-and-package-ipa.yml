@@ -85,7 +85,8 @@ jobs:
           cp "$INSERT_DYLIB" "$RUNNER_TEMP/insert-dylib"
           chmod +x "$RUNNER_TEMP/insert-dylib"
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
-          test "$(command -v insert-dylib)" = "$RUNNER_TEMP/insert-dylib"
+          test -f "$RUNNER_TEMP/insert-dylib"
+          test -x "$RUNNER_TEMP/insert-dylib"
 
       - name: Download and validate Spotify IPA
         env:
