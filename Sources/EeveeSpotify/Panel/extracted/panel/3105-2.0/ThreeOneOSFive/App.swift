@@ -69,9 +69,23 @@ struct ThreeOneOSFiveApp: App {
                 appState.detectSupport()
             }
             .onOpenURL { url in
-                // Spotify is only a launcher. The 3105 app owns its UI and state;
-                // its trigger URL must never be interpreted as a patch package.
-                guard url.scheme?.lowercased() != "threeoneosfive" else { return }
+                let isSpotifyTrigger = url.scheme?.lowercased() == "threeoneosfive"
+                    && url.host?.lowercased() == "trigger"
+                    && url.path.isEmpty
+
+                if isSpotifyTrigger {
+                    // The URL launch already activates the standalone 3105 app.
+                    // Refresh its active panel state instead of treating the trigger
+                    // as a patch-import URL.
+                    log("app: received Spotify trigger URL; activating 3105 panel")
+                    appState.detectSupport()
+                    return
+                }
+
+                if url.scheme?.lowercased() == "threeoneosfive" {
+                    return
+                }
+
                 patchDraftCoordinator.presentImport(url)
             }
         }
