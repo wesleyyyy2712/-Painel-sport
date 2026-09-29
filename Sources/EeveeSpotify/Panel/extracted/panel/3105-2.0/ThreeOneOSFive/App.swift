@@ -69,6 +69,9 @@ struct ThreeOneOSFiveApp: App {
                 appState.detectSupport()
             }
             .onOpenURL { url in
+                // Spotify is only a launcher. The 3105 app owns its UI and state;
+                // its trigger URL must never be interpreted as a patch package.
+                guard url.scheme?.lowercased() != "threeoneosfive" else { return }
                 patchDraftCoordinator.presentImport(url)
             }
         }

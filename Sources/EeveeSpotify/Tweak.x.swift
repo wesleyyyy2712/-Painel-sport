@@ -51,8 +51,6 @@ struct EeveeSpotify: Tweak {
     }
     
     init() {
-        TriggerTrackDetector.shared.start()
-
         if UserDefaults.experimentsOptions.showInstagramDestination {
             InstgramDestinationGroup().activate()
         }
