@@ -20,6 +20,33 @@ enum GuestMachOLoadCommandKind: String, Equatable, Sendable {
     case other
 }
 
+struct GuestMachOSection64: Equatable, Sendable {
+    let sectionName: String
+    let segmentName: String
+    let address: UInt64
+    let size: UInt64
+    let fileOffset: UInt32
+    let alignment: UInt32
+    let relocationOffset: UInt32
+    let relocationCount: UInt32
+    let flags: UInt32
+    let reserved1: UInt32
+    let reserved2: UInt32
+    let reserved3: UInt32
+}
+
+struct GuestMachOSegment64: Equatable, Sendable {
+    let name: String
+    let virtualAddress: UInt64
+    let virtualSize: UInt64
+    let fileOffset: UInt64
+    let fileSize: UInt64
+    let maximumProtection: Int32
+    let initialProtection: Int32
+    let flags: UInt32
+    let sections: [GuestMachOSection64]
+}
+
 struct GuestMachOLoadCommand: Equatable, Sendable {
     let command: UInt32
     let size: UInt32
@@ -29,6 +56,7 @@ struct GuestMachOLoadCommand: Equatable, Sendable {
     let dataOffset: UInt32?
     let dataSize: UInt32?
     let uuid: Data?
+    let segment: GuestMachOSegment64?
 }
 
 struct GuestMachOSlice: Equatable, Sendable {
@@ -42,6 +70,7 @@ struct GuestMachOSlice: Equatable, Sendable {
     let commandCount: UInt32
     let commandsSize: UInt32
     let loadCommands: [GuestMachOLoadCommand]
+    let segments: [GuestMachOSegment64]
 }
 
 enum GuestMachOParserError: Error, LocalizedError, Equatable {
@@ -53,6 +82,8 @@ enum GuestMachOParserError: Error, LocalizedError, Equatable {
     case invalidLoadCommand(offset: Int, size: UInt32)
     case loadCommandsOutOfBounds
     case invalidStringOffset(command: UInt32, offset: UInt32)
+    case invalidFileRange(context: String, offset: UInt64, size: UInt64, sliceSize: UInt64)
+    case invalidAddressRange(context: String)
 
     var errorDescription: String? {
         switch self {
@@ -72,6 +103,10 @@ enum GuestMachOParserError: Error, LocalizedError, Equatable {
             return "Mach-O load commands exceed slice bounds"
         case .invalidStringOffset(let command, let offset):
             return "Invalid string offset \(offset) in load command \(command)"
+        case .invalidFileRange(let context, let offset, let size, let sliceSize):
+            return "Invalid \(context) file range offset=\(offset) size=\(size) sliceSize=\(sliceSize)"
+        case .invalidAddressRange(let context):
+            return "Invalid \(context) virtual address range"
         }
     }
 }
@@ -184,11 +219,16 @@ struct GuestMachOParser: Sendable {
                 offset: commandOffset,
                 command: command,
                 size: commandSize,
-                order: byteOrder
+                order: byteOrder,
+                sliceSize: size
             ))
             commandOffset += Int(commandSize)
         }
+        guard commandOffset == commandsEnd else {
+            throw GuestMachOParserError.invalidLoadCommand(offset: commandOffset, size: 0)
+        }
 
+        let segments = commands.compactMap(\.segment)
         return GuestMachOSlice(
             offset: UInt64(offset),
             size: size,
@@ -199,7 +239,8 @@ struct GuestMachOParser: Sendable {
             fileType: fileType,
             commandCount: commandCount,
             commandsSize: commandsSize,
-            loadCommands: commands
+            loadCommands: commands,
+            segments: segments
         )
     }
 
@@ -208,7 +249,8 @@ struct GuestMachOParser: Sendable {
         offset: Int,
         command: UInt32,
         size: UInt32,
-        order: GuestMachOByteOrder
+        order: GuestMachOByteOrder,
+        sliceSize: UInt64
     ) throws -> GuestMachOLoadCommand {
         let base = offset
         let kind: GuestMachOLoadCommandKind
@@ -231,7 +273,25 @@ struct GuestMachOParser: Sendable {
 
         if kind == .segment64 {
             guard size >= 72 else { throw GuestMachOParserError.invalidLoadCommand(offset: offset, size: size) }
-            segmentName = try readCString(data, at: base + 8, length: 16)
+            let segment = try parseSegment64(
+                data: data,
+                offset: base,
+                commandSize: size,
+                order: order,
+                sliceSize: sliceSize
+            )
+            segmentName = segment.name
+            return GuestMachOLoadCommand(
+                command: command,
+                size: size,
+                kind: kind,
+                name: nil,
+                segmentName: segment.name,
+                dataOffset: nil,
+                dataSize: nil,
+                uuid: nil,
+                segment: segment
+            )
         } else if kind == .loadDylib || kind == .idDylib {
             guard size >= 24 else { throw GuestMachOParserError.invalidLoadCommand(offset: offset, size: size) }
             let nameOffset = try readUInt32(data, at: base + 8, order: order)
@@ -257,7 +317,140 @@ struct GuestMachOParser: Sendable {
             segmentName: segmentName,
             dataOffset: dataOffset,
             dataSize: dataSize,
-            uuid: uuid
+            uuid: uuid,
+            segment: nil
+        )
+    }
+
+    private func parseSegment64(
+        data: Data,
+        offset: Int,
+        commandSize: UInt32,
+        order: GuestMachOByteOrder,
+        sliceSize: UInt64
+    ) throws -> GuestMachOSegment64 {
+        let minimumSize: UInt64 = 72
+        guard UInt64(commandSize) >= minimumSize else {
+            throw GuestMachOParserError.invalidLoadCommand(offset: offset, size: commandSize)
+        }
+
+        let name = try readCString(data, at: offset + 8, length: 16)
+        let virtualAddress = try readUInt64(data, at: offset + 24, order: order)
+        let virtualSize = try readUInt64(data, at: offset + 32, order: order)
+        let fileOffset = try readUInt64(data, at: offset + 40, order: order)
+        let fileSize = try readUInt64(data, at: offset + 48, order: order)
+        let maximumProtection = Int32(bitPattern: try readUInt32(data, at: offset + 56, order: order))
+        let initialProtection = Int32(bitPattern: try readUInt32(data, at: offset + 60, order: order))
+        let sectionCount = try readUInt32(data, at: offset + 64, order: order)
+        let flags = try readUInt32(data, at: offset + 68, order: order)
+
+        guard fileOffset <= sliceSize, fileSize <= sliceSize - fileOffset else {
+            throw GuestMachOParserError.invalidFileRange(
+                context: "segment",
+                offset: fileOffset,
+                size: fileSize,
+                sliceSize: sliceSize
+            )
+        }
+        guard virtualSize <= UInt64.max - virtualAddress else {
+            throw GuestMachOParserError.invalidAddressRange(context: "segment")
+        }
+
+        let sectionBytes = UInt64(sectionCount) * 80
+        guard sectionBytes <= UInt64(commandSize) - minimumSize else {
+            throw GuestMachOParserError.invalidLoadCommand(offset: offset, size: commandSize)
+        }
+
+        var sections: [GuestMachOSection64] = []
+        for index in 0..<Int(sectionCount) {
+            let sectionOffset = offset + 72 + index * 80
+            let section = try parseSection64(
+                data: data,
+                offset: sectionOffset,
+                order: order,
+                sliceSize: sliceSize
+            )
+            let sectionType = section.flags & 0xff
+            if sectionType != 1 && section.size > 0 {
+                let sectionFileOffset = UInt64(section.fileOffset)
+                guard sectionFileOffset >= fileOffset,
+                      sectionFileOffset - fileOffset <= fileSize,
+                      section.size <= fileSize - (sectionFileOffset - fileOffset) else {
+                    throw GuestMachOParserError.invalidFileRange(
+                        context: "section \(section.segmentName),\(section.sectionName) outside segment",
+                        offset: sectionFileOffset,
+                        size: section.size,
+                        sliceSize: fileSize
+                    )
+                }
+            }
+            sections.append(section)
+        }
+
+        return GuestMachOSegment64(
+            name: name,
+            virtualAddress: virtualAddress,
+            virtualSize: virtualSize,
+            fileOffset: fileOffset,
+            fileSize: fileSize,
+            maximumProtection: maximumProtection,
+            initialProtection: initialProtection,
+            flags: flags,
+            sections: sections
+        )
+    }
+
+    private func parseSection64(
+        data: Data,
+        offset: Int,
+        order: GuestMachOByteOrder,
+        sliceSize: UInt64
+    ) throws -> GuestMachOSection64 {
+        let sectionName = try readCString(data, at: offset, length: 16)
+        let segmentName = try readCString(data, at: offset + 16, length: 16)
+        let address = try readUInt64(data, at: offset + 32, order: order)
+        let size = try readUInt64(data, at: offset + 40, order: order)
+        let fileOffset = try readUInt32(data, at: offset + 48, order: order)
+        let alignment = try readUInt32(data, at: offset + 52, order: order)
+        let relocationOffset = try readUInt32(data, at: offset + 56, order: order)
+        let relocationCount = try readUInt32(data, at: offset + 60, order: order)
+        let flags = try readUInt32(data, at: offset + 64, order: order)
+        let reserved1 = try readUInt32(data, at: offset + 68, order: order)
+        let reserved2 = try readUInt32(data, at: offset + 72, order: order)
+        let reserved3 = try readUInt32(data, at: offset + 76, order: order)
+
+        // S_ZEROFILL sections have no bytes in the file. All other sections
+        // must fit within the slice before any future consumer can read them.
+        let sectionType = flags & 0xff
+        if sectionType != 1 && size > 0 {
+            let sectionFileOffset = UInt64(fileOffset)
+            guard sectionFileOffset <= sliceSize,
+                  size <= sliceSize - sectionFileOffset else {
+                throw GuestMachOParserError.invalidFileRange(
+                    context: "section \(segmentName),\(sectionName)",
+                    offset: sectionFileOffset,
+                    size: size,
+                    sliceSize: sliceSize
+                )
+            }
+        }
+        guard size <= UInt64.max - address else {
+            throw GuestMachOParserError.invalidAddressRange(context: "section \(segmentName),\(sectionName)")
+        }
+
+        return GuestMachOSection64(
+            sectionName: sectionName,
+            segmentName: segmentName,
+            address: address,
+            size: size,
+            fileOffset: fileOffset,
+            alignment: alignment,
+            relocationOffset: relocationOffset,
+            relocationCount: relocationCount,
+            flags: flags,
+            reserved1: reserved1,
+            reserved2: reserved2,
+            reserved3: reserved3
         )
     }
 
