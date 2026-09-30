@@ -17,7 +17,45 @@ enum GuestMachOLoadCommandKind: String, Equatable, Sendable {
     case uuid
     case codeSignature
     case chainedFixups
+    case main
+    case symtab
+    case dysymtab
+    case dyldExportsTrie
     case other
+}
+
+struct GuestMachOHeader64: Equatable, Sendable {
+    let magic: UInt32
+    let cpuType: Int32
+    let cpuSubtype: Int32
+    let fileType: UInt32
+    let flags: UInt32
+    let reserved: UInt32
+}
+
+struct GuestMachODynamicDependency: Equatable, Sendable {
+    let command: UInt32
+    let name: String
+}
+
+struct GuestMachORPath: Equatable, Sendable {
+    let command: UInt32
+    let path: String
+}
+
+struct GuestMachOLinkEdit: Equatable, Sendable {
+    let fileOffset: UInt64
+    let fileSize: UInt64
+}
+
+struct GuestMachODataBlob: Equatable, Sendable {
+    let fileOffset: UInt32
+    let fileSize: UInt32
+}
+
+struct GuestMachOEntryPoint: Equatable, Sendable {
+    let fileOffset: UInt64
+    let stackSize: UInt64?
 }
 
 struct GuestMachOSection64: Equatable, Sendable {
@@ -57,6 +95,8 @@ struct GuestMachOLoadCommand: Equatable, Sendable {
     let dataSize: UInt32?
     let uuid: Data?
     let segment: GuestMachOSegment64?
+    let entryOffset: UInt64?
+    let stackSize: UInt64?
 }
 
 struct GuestMachOSlice: Equatable, Sendable {
@@ -71,6 +111,14 @@ struct GuestMachOSlice: Equatable, Sendable {
     let commandsSize: UInt32
     let loadCommands: [GuestMachOLoadCommand]
     let segments: [GuestMachOSegment64]
+    let header: GuestMachOHeader64
+    let dynamicDependencies: [GuestMachODynamicDependency]
+    let rpaths: [GuestMachORPath]
+    let linkEdit: GuestMachOLinkEdit?
+    let codeSignature: GuestMachODataBlob?
+    let chainedFixups: GuestMachODataBlob?
+    let exportsTrie: GuestMachODataBlob?
+    let entryPoint: GuestMachOEntryPoint?
 }
 
 enum GuestMachOParserError: Error, LocalizedError, Equatable {
@@ -84,6 +132,7 @@ enum GuestMachOParserError: Error, LocalizedError, Equatable {
     case invalidStringOffset(command: UInt32, offset: UInt32)
     case invalidFileRange(context: String, offset: UInt64, size: UInt64, sliceSize: UInt64)
     case invalidAddressRange(context: String)
+    case invalidDataBlob(context: String, offset: UInt64, size: UInt64, sliceSize: UInt64)
 
     var errorDescription: String? {
         switch self {
@@ -107,6 +156,8 @@ enum GuestMachOParserError: Error, LocalizedError, Equatable {
             return "Invalid \(context) file range offset=\(offset) size=\(size) sliceSize=\(sliceSize)"
         case .invalidAddressRange(let context):
             return "Invalid \(context) virtual address range"
+        case .invalidDataBlob(let context, let offset, let size, let sliceSize):
+            return "Invalid \(context) data offset=\(offset) size=\(size) sliceSize=\(sliceSize)"
         }
     }
 }
@@ -124,6 +175,10 @@ struct GuestMachOParser: Sendable {
     private static let lcCodeSignature: UInt32 = 0x1d
     private static let lcRPath: UInt32 = 0x8000001c
     private static let lcDyldChainedFixups: UInt32 = 0x80000034
+    private static let lcMain: UInt32 = 0x80000028
+    private static let lcSymtab: UInt32 = 0x2
+    private static let lcDysymtab: UInt32 = 0xb
+    private static let lcDyldExportsTrie: UInt32 = 0x80000033
 
     func parse(data: Data) throws -> [GuestMachOSlice] {
         guard data.count >= 4 else {
@@ -196,6 +251,8 @@ struct GuestMachOParser: Sendable {
         let fileType = try readUInt32(data, at: offset + 12, order: byteOrder)
         let commandCount = try readUInt32(data, at: offset + 16, order: byteOrder)
         let commandsSize = try readUInt32(data, at: offset + 20, order: byteOrder)
+        let flags = try readUInt32(data, at: offset + 24, order: byteOrder)
+        let reserved = try readUInt32(data, at: offset + 28, order: byteOrder)
         let commandsStart = offset + 32
         let sliceEnd = offset + Int(size)
         let commandsEnd = commandsStart + Int(commandsSize)
@@ -229,6 +286,26 @@ struct GuestMachOParser: Sendable {
         }
 
         let segments = commands.compactMap(\.segment)
+        let dependencies = commands.compactMap { command -> GuestMachODynamicDependency? in
+            guard (command.kind == .loadDylib || command.kind == .idDylib), let name = command.name else { return nil }
+            return GuestMachODynamicDependency(command: command.command, name: name)
+        }
+        let rpaths = commands.compactMap { command -> GuestMachORPath? in
+            guard command.kind == .rpath, let path = command.name else { return nil }
+            return GuestMachORPath(command: command.command, path: path)
+        }
+        let linkEditSegment = segments.first { $0.name == "__LINKEDIT" }
+        let linkEdit = linkEditSegment.map { GuestMachOLinkEdit(fileOffset: $0.fileOffset, fileSize: $0.fileSize) }
+        let codeSignature = try commands.first(where: { $0.kind == .codeSignature }).map { try blob($0, context: "code signature", sliceSize: size) }
+        let chainedFixups = try commands.first(where: { $0.kind == .chainedFixups }).map { try blob($0, context: "chained fixups", sliceSize: size) }
+        let exportsTrie = try commands.first(where: { $0.kind == .dyldExportsTrie }).map { try blob($0, context: "exports trie", sliceSize: size) }
+        let entryPoint = commands.first(where: { $0.kind == .main }).flatMap { command -> GuestMachOEntryPoint? in
+            guard let offset = command.entryOffset else { return nil }
+            return GuestMachOEntryPoint(fileOffset: offset, stackSize: command.stackSize)
+        }
+        if let entryPoint, entryPoint.fileOffset > size {
+            throw GuestMachOParserError.invalidDataBlob(context: "entry point", offset: entryPoint.fileOffset, size: 0, sliceSize: size)
+        }
         return GuestMachOSlice(
             offset: UInt64(offset),
             size: size,
@@ -240,7 +317,15 @@ struct GuestMachOParser: Sendable {
             commandCount: commandCount,
             commandsSize: commandsSize,
             loadCommands: commands,
-            segments: segments
+            segments: segments,
+            header: GuestMachOHeader64(magic: try readUInt32(data, at: offset, order: byteOrder), cpuType: cpuType, cpuSubtype: cpuSubtype, fileType: fileType, flags: flags, reserved: reserved),
+            dynamicDependencies: dependencies,
+            rpaths: rpaths,
+            linkEdit: linkEdit,
+            codeSignature: codeSignature,
+            chainedFixups: chainedFixups,
+            exportsTrie: exportsTrie,
+            entryPoint: entryPoint
         )
     }
 
@@ -260,8 +345,12 @@ struct GuestMachOParser: Sendable {
         case Self.lcIDDylib: kind = .idDylib
         case Self.lcRPath: kind = .rpath
         case Self.lcUUID: kind = .uuid
-        case Self.lcCodeSignature: kind = .codeSignature
-        case Self.lcDyldChainedFixups: kind = .chainedFixups
+            case Self.lcCodeSignature: kind = .codeSignature
+            case Self.lcDyldChainedFixups: kind = .chainedFixups
+        case Self.lcMain: kind = .main
+        case Self.lcSymtab: kind = .symtab
+        case Self.lcDysymtab: kind = .dysymtab
+        case Self.lcDyldExportsTrie: kind = .dyldExportsTrie
         default: kind = .other
         }
 
@@ -270,6 +359,8 @@ struct GuestMachOParser: Sendable {
         var dataOffset: UInt32?
         var dataSize: UInt32?
         var uuid: Data?
+        var entryOffset: UInt64?
+        var stackSize: UInt64?
 
         if kind == .segment64 {
             guard size >= 72 else { throw GuestMachOParserError.invalidLoadCommand(offset: offset, size: size) }
@@ -290,7 +381,9 @@ struct GuestMachOParser: Sendable {
                 dataOffset: nil,
                 dataSize: nil,
                 uuid: nil,
-                segment: segment
+                segment: segment,
+                entryOffset: nil,
+                stackSize: nil
             )
         } else if kind == .loadDylib || kind == .idDylib {
             guard size >= 24 else { throw GuestMachOParserError.invalidLoadCommand(offset: offset, size: size) }
@@ -303,10 +396,14 @@ struct GuestMachOParser: Sendable {
         } else if kind == .uuid {
             guard size >= 24 else { throw GuestMachOParserError.invalidLoadCommand(offset: offset, size: size) }
             uuid = data.subdata(in: (base + 8)..<(base + 24))
-        } else if kind == .codeSignature || kind == .chainedFixups {
+        } else if kind == .codeSignature || kind == .chainedFixups || kind == .dyldExportsTrie {
             guard size >= 16 else { throw GuestMachOParserError.invalidLoadCommand(offset: offset, size: size) }
             dataOffset = try readUInt32(data, at: base + 8, order: order)
             dataSize = try readUInt32(data, at: base + 12, order: order)
+        } else if kind == .main {
+            guard size >= 24 else { throw GuestMachOParserError.invalidLoadCommand(offset: offset, size: size) }
+            entryOffset = try readUInt64(data, at: base + 8, order: order)
+            stackSize = try readUInt64(data, at: base + 16, order: order)
         }
 
         return GuestMachOLoadCommand(
@@ -318,8 +415,20 @@ struct GuestMachOParser: Sendable {
             dataOffset: dataOffset,
             dataSize: dataSize,
             uuid: uuid,
-            segment: nil
+            segment: nil,
+            entryOffset: entryOffset,
+            stackSize: stackSize
         )
+    }
+
+    private func blob(_ command: GuestMachOLoadCommand, context: String, sliceSize: UInt64) throws -> GuestMachODataBlob {
+        guard let offset = command.dataOffset, let dataSize = command.dataSize else {
+            throw GuestMachOParserError.invalidDataBlob(context: context, offset: 0, size: 0, sliceSize: sliceSize)
+        }
+        guard UInt64(offset) <= sliceSize, UInt64(dataSize) <= sliceSize - UInt64(offset) else {
+            throw GuestMachOParserError.invalidDataBlob(context: context, offset: UInt64(offset), size: UInt64(dataSize), sliceSize: sliceSize)
+        }
+        return GuestMachODataBlob(fileOffset: offset, fileSize: dataSize)
     }
 
     private func parseSegment64(

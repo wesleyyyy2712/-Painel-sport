@@ -8,6 +8,8 @@ final class GuestMachOParserTests: XCTestCase {
 
         XCTAssertEqual(slice.format, .machO64)
         XCTAssertEqual(slice.byteOrder, .little)
+        XCTAssertEqual(slice.header.fileType, 2)
+        XCTAssertEqual(slice.header.cpuType, 0x0100000c)
         XCTAssertEqual(slice.cpuType, 0x0100000c)
         XCTAssertEqual(slice.cpuSubtype, 2)
         XCTAssertEqual(slice.commandCount, 5)
@@ -32,9 +34,13 @@ final class GuestMachOParserTests: XCTestCase {
         XCTAssertEqual(text.sections[0].flags, 0x80000400)
         XCTAssertEqual(slice.loadCommands[1].name, "@rpath/SpotifyFramework")
         XCTAssertEqual(slice.loadCommands[2].name, "@executable_path/Frameworks")
+        XCTAssertEqual(slice.dynamicDependencies.map(\.name), ["@rpath/SpotifyFramework"])
+        XCTAssertEqual(slice.rpaths.map(\.path), ["@executable_path/Frameworks"])
         XCTAssertEqual(slice.loadCommands[3].uuid, Data((0..<16).map(UInt8.init)))
-        XCTAssertEqual(slice.loadCommands[4].dataOffset, 0x1234)
-        XCTAssertEqual(slice.loadCommands[4].dataSize, 0x40)
+        XCTAssertEqual(slice.loadCommands[4].dataOffset, 0x120)
+        XCTAssertEqual(slice.loadCommands[4].dataSize, 0x20)
+        XCTAssertEqual(slice.codeSignature?.fileOffset, 0x120)
+        XCTAssertEqual(slice.codeSignature?.fileSize, 0x20)
     }
 
     func testReadsUniversalFatMachOWithTwoSlices() throws {
@@ -97,6 +103,24 @@ final class GuestMachOParserTests: XCTestCase {
             XCTAssertEqual(context, "section __TEXT,__text")
         }
     }
+
+    func testDescribesLinkEditEntryPointAndFixupMetadata() throws {
+        let slice = try XCTUnwrap(GuestMachOParser().parse(data: MachOFixture.completeSlice()).first)
+
+        XCTAssertEqual(slice.header.fileType, 2)
+        XCTAssertEqual(slice.linkEdit?.fileOffset, 0x120)
+        XCTAssertEqual(slice.linkEdit?.fileSize, 0x60)
+        XCTAssertEqual(slice.entryPoint?.fileOffset, 0x80)
+        XCTAssertEqual(slice.entryPoint?.stackSize, 0)
+        XCTAssertEqual(slice.chainedFixups?.fileOffset, 0x140)
+        XCTAssertEqual(slice.chainedFixups?.fileSize, 0x10)
+        XCTAssertEqual(slice.exportsTrie?.fileOffset, 0x150)
+        XCTAssertEqual(slice.exportsTrie?.fileSize, 0x10)
+        XCTAssertTrue(slice.loadCommands.contains { $0.kind == .main })
+        XCTAssertTrue(slice.loadCommands.contains { $0.kind == .symtab })
+        XCTAssertTrue(slice.loadCommands.contains { $0.kind == .chainedFixups })
+        XCTAssertTrue(slice.loadCommands.contains { $0.kind == .dyldExportsTrie })
+    }
 }
 
 private enum MachOFixture {
@@ -131,6 +155,18 @@ private enum MachOFixture {
         return data
     }
 
+    static func completeSlice() -> Data {
+        var data = thinSlice(cpuSubtype: 2)
+        let extra = linkEditSegmentCommand() + mainCommand()
+            + dataCommand(0x80000034, offset: 0x140, size: 0x10)
+            + dataCommand(0x80000033, offset: 0x150, size: 0x10)
+            + command(0x2, size: 24)
+        appendLE(10, to: &data, at: 16)
+        appendLE(UInt32(288 + extra.count), to: &data, at: 20)
+        data.append(contentsOf: extra)
+        return data
+    }
+
     static func segmentCommand() -> [UInt8] {
         var bytes = command(0x19, size: 152)
         bytes.append(contentsOf: Array("__TEXT".utf8))
@@ -162,6 +198,36 @@ private enum MachOFixture {
         return bytes
     }
 
+    static func linkEditSegmentCommand() -> [UInt8] {
+        var bytes = command(0x19, size: 72)
+        bytes.append(contentsOf: Array("__LINKEDIT".utf8))
+        bytes.append(0)
+        bytes.append(contentsOf: Array(repeating: 0, count: 16 - 11))
+        appendLE64(0x2000, to: &bytes, at: 24)
+        appendLE64(0x1000, to: &bytes, at: 32)
+        appendLE64(0x120, to: &bytes, at: 40)
+        appendLE64(0x60, to: &bytes, at: 48)
+        appendLE(7, to: &bytes, at: 56)
+        appendLE(1, to: &bytes, at: 60)
+        appendLE(0, to: &bytes, at: 64)
+        appendLE(0, to: &bytes, at: 68)
+        return bytes
+    }
+
+    static func mainCommand() -> [UInt8] {
+        var bytes = command(0x80000028, size: 24)
+        appendLE64(0x80, to: &bytes, at: 8)
+        appendLE64(0, to: &bytes, at: 16)
+        return bytes
+    }
+
+    static func dataCommand(_ commandValue: UInt32, offset: UInt32, size: UInt32) -> [UInt8] {
+        var bytes = command(commandValue, size: 16)
+        appendLE(offset, to: &bytes, at: 8)
+        appendLE(size, to: &bytes, at: 12)
+        return bytes
+    }
+
     static func dylibCommand() -> [UInt8] {
         var bytes = command(0xc, size: 48)
         appendLE(24, to: &bytes, at: 8)
@@ -184,8 +250,8 @@ private enum MachOFixture {
 
     static func codeSignatureCommand() -> [UInt8] {
         var bytes = command(0x1d, size: 16)
-        appendLE(0x1234, to: &bytes, at: 8)
-        appendLE(0x40, to: &bytes, at: 12)
+        appendLE(0x120, to: &bytes, at: 8)
+        appendLE(0x20, to: &bytes, at: 12)
         return bytes
     }
 
