@@ -12,6 +12,10 @@ enum GuestMachOFormat: Equatable, Sendable {
 enum GuestMachOLoadCommandKind: String, Equatable, Sendable {
     case segment64
     case loadDylib
+    case loadWeakDylib
+    case reexportDylib
+    case loadUpwardDylib
+    case lazyLoadDylib
     case idDylib
     case rpath
     case uuid
@@ -170,6 +174,10 @@ struct GuestMachOParser: Sendable {
 
     private static let lcSegment64: UInt32 = 0x19
     private static let lcLoadDylib: UInt32 = 0xc
+    private static let lcLoadWeakDylib: UInt32 = 0x80000018
+    private static let lcReexportDylib: UInt32 = 0x8000001f
+    private static let lcLazyLoadDylib: UInt32 = 0x20
+    private static let lcLoadUpwardDylib: UInt32 = 0x80000023
     private static let lcIDDylib: UInt32 = 0xd
     private static let lcUUID: UInt32 = 0x1b
     private static let lcCodeSignature: UInt32 = 0x1d
@@ -287,7 +295,7 @@ struct GuestMachOParser: Sendable {
 
         let segments = commands.compactMap(\.segment)
         let dependencies = commands.compactMap { command -> GuestMachODynamicDependency? in
-            guard (command.kind == .loadDylib || command.kind == .idDylib), let name = command.name else { return nil }
+            guard [.loadDylib, .loadWeakDylib, .reexportDylib, .loadUpwardDylib, .lazyLoadDylib, .idDylib].contains(command.kind), let name = command.name else { return nil }
             return GuestMachODynamicDependency(command: command.command, name: name)
         }
         let rpaths = commands.compactMap { command -> GuestMachORPath? in
@@ -342,6 +350,10 @@ struct GuestMachOParser: Sendable {
         switch command {
         case Self.lcSegment64: kind = .segment64
         case Self.lcLoadDylib: kind = .loadDylib
+        case Self.lcLoadWeakDylib: kind = .loadWeakDylib
+        case Self.lcReexportDylib: kind = .reexportDylib
+        case Self.lcLoadUpwardDylib: kind = .loadUpwardDylib
+        case Self.lcLazyLoadDylib: kind = .lazyLoadDylib
         case Self.lcIDDylib: kind = .idDylib
         case Self.lcRPath: kind = .rpath
         case Self.lcUUID: kind = .uuid
@@ -385,7 +397,7 @@ struct GuestMachOParser: Sendable {
                 entryOffset: nil,
                 stackSize: nil
             )
-        } else if kind == .loadDylib || kind == .idDylib {
+        } else if [.loadDylib, .loadWeakDylib, .reexportDylib, .loadUpwardDylib, .lazyLoadDylib, .idDylib].contains(kind) {
             guard size >= 24 else { throw GuestMachOParserError.invalidLoadCommand(offset: offset, size: size) }
             let nameOffset = try readUInt32(data, at: base + 8, order: order)
             name = try readCommandCString(data, commandOffset: base, commandSize: Int(size), stringOffset: nameOffset, command: command)
